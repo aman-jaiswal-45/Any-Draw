@@ -433,6 +433,32 @@ export class Game {
   setLayersCallback(cb) {
     this.layersCallback = cb;
   }
+  setStatusCallback(cb) {
+    this.statusCallback = cb;
+  }
+  setPendingRequestsCallback(cb) {
+    this.pendingRequestsCallback = cb;
+  }
+  setCollaboratorsCallback(cb) {
+    this.collaboratorsCallback = cb;
+  }
+  setRoomDeletedCallback(cb) {
+    this.roomDeletedCallback = cb;
+  }
+  approveJoin(targetUserId) {
+    this.socket.send(JSON.stringify({
+      type: "approve_join",
+      roomId: this.roomId,
+      userId: targetUserId
+    }));
+  }
+  rejectJoin(targetUserId) {
+    this.socket.send(JSON.stringify({
+      type: "reject_join",
+      roomId: this.roomId,
+      userId: targetUserId
+    }));
+  }
   getLayers() {
     return this.existingShapes.slice();
   }
@@ -534,7 +560,57 @@ export class Game {
         return;
       }
       if (!parsed || typeof parsed.type !== "string") return;
+
+      if (parsed.type === "pending_approval") {
+        this.statusCallback?.("pending");
+        return;
+      }
+      if (parsed.type === "admin_status" && parsed.status === "offline") {
+        this.statusCallback?.("offline");
+        return;
+      }
+      if (parsed.type === "join_approved") {
+        this.statusCallback?.("approved");
+        const serverShapes = parsed.shapes || [];
+        this.existingShapes = serverShapes.map((s) => ({
+          id: String(s.id),
+          shape: s.shape
+        }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        return;
+      }
+      if (parsed.type === "join_rejected") {
+        this.socket.isTerminal = true;
+        this.statusCallback?.("rejected");
+        return;
+      }
+      if (parsed.type === "admin_pending_requests") {
+        this.pendingRequestsCallback?.(parsed.requests || []);
+        return;
+      }
+      if (parsed.type === "join_request") {
+        this.pendingRequestsCallback?.((prev) => {
+          const prevList = Array.isArray(prev) ? prev : [];
+          if (prevList.some((r) => r.userId === parsed.userId)) return prevList;
+          return [...prevList, { userId: parsed.userId, userName: parsed.userName, userEmail: parsed.userEmail }];
+        });
+        return;
+      }
+      if (parsed.type === "collaborators_list") {
+        this.collaboratorsCallback?.(parsed.collaborators || []);
+        return;
+      }
+      if (parsed.type === "room_deleted") {
+        this.socket.isTerminal = true;
+        this.roomDeletedCallback?.();
+        return;
+      }
+
       if (parsed.type === "room_state" || parsed.type === "undo" || parsed.type === "redo") {
+        if (parsed.type === "room_state") {
+          this.statusCallback?.("approved");
+        }
         const serverShapes = parsed.shapes || [];
         this.existingShapes = serverShapes.map((s) => ({
           id: String(s.id),

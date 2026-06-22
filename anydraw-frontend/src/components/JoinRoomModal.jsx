@@ -30,7 +30,7 @@ export const JoinRoomModal = ({ isOpen, onClose }) => {
       if (response.data && response.data.room) {
         const roomId = response.data.room.id;
         console.log("Room found with ID:", roomId);
-        navigate(`/canvas/${roomId}`);
+        navigate(`/canvas/${roomId}?joinRequest=true`);
         onClose();
       } else {
         setError("Room not found. Please verify the room name.");

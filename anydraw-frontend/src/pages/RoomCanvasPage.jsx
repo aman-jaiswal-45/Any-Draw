@@ -17,11 +17,20 @@ export default function RoomCanvasPage() {
       return;
     }
 
-    const ws = new WebSocket(`${WS_URL}?token=${token}`);
+    const searchParams = new URLSearchParams(window.location.search);
+    const joinRequest = searchParams.get("joinRequest");
+    const wsUrl = joinRequest 
+      ? `${WS_URL}?token=${token}&joinRequest=true` 
+      : `${WS_URL}?token=${token}`;
+
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       setSocket(ws);
       setConnectionError(false);
+      if (joinRequest) {
+        window.history.replaceState(null, "", `/canvas/${roomId}`);
+      }
     };
 
     ws.onerror = (error) => {
@@ -30,7 +39,9 @@ export default function RoomCanvasPage() {
     };
 
     ws.onclose = () => {
-      setSocket(null);
+      if (!ws.isTerminal) {
+        setSocket(null);
+      }
       console.log("WebSocket connection closed");
     };
 

@@ -120,6 +120,15 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
         roomSessions.computeIfAbsent(roomId, k -> new CopyOnWriteArraySet<>()).add(session);
 
+        // Record user join event
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            String userId = (String) session.getAttributes().get("userId");
+            roomService.recordUserJoin(roomDbId, userId);
+        } catch (Exception e) {
+            System.err.println("Failed to record room join: " + e.getMessage());
+        }
+
         // Load or initialize room state
         RoomState roomState = activeRooms.get(roomId);
         if (roomState == null) {

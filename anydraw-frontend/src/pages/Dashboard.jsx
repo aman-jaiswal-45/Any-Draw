@@ -10,6 +10,7 @@ import Logo from "../components/Logo.jsx";
 export default function Dashboard() {
   const navigate = useNavigate();
   const [rooms, setRooms] = useState([]);
+  const [joinedRooms, setJoinedRooms] = useState([]);
   const [userdata, setUserdata] = useState(null);
   const [error, setError] = useState("");
   const [loadingRooms, setLoadingRooms] = useState(true);
@@ -35,6 +36,7 @@ export default function Dashboard() {
           headers: { Authorization: `Bearer ${token}` },
         });
         setRooms(response.data.rooms ?? []);
+        setJoinedRooms(response.data.joinedRooms ?? []);
       } catch (err) {
         console.error("Failed to fetch rooms:", err);
         setError("Failed to fetch rooms. Please try again later.");
@@ -147,36 +149,71 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Room List */}
-        <div>
-          <h2 className="text-3xl font-semibold mb-6 text-blue-900 dark:text-slate-300">Your Rooms</h2>
-          {rooms.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {rooms.map((room) => (
-                <div
-                  key={room.id}
-                  className="bg-gray-200 dark:bg-slate-950/40 border border-transparent dark:border-slate-800 p-6 rounded-xl shadow-lg flex flex-col justify-between hover:bg-gray-300/90 dark:hover:border-slate-700 transition-colors text-slate-700 dark:text-slate-300"
-                >
-                  <div className="mb-4 space-y-2">
-                    <span className="text-xl font-bold text-blue-900 dark:text-white block">Room: {room.slug}</span>
-                    <span className="text-sm text-slate-600 dark:text-slate-400 block">Admin: {room.admin?.name || "Unknown"}</span>
-                    <span className="text-sm text-slate-600 dark:text-slate-400 block">Room ID: {room.id}</span>
-                    <span className="text-sm text-slate-600 dark:text-slate-400 block">Created: {new Date(room.createdAt).toLocaleString()}</span>
+        {/* Room Lists */}
+        <div className="space-y-12">
+          {/* Your Rooms */}
+          <div>
+            <h2 className="text-3xl font-semibold mb-6 text-blue-900 dark:text-slate-300">Your Rooms</h2>
+            {rooms.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {rooms.map((room) => (
+                  <div
+                    key={room.id}
+                    className="bg-gray-200 dark:bg-slate-950/40 border border-transparent dark:border-slate-800 p-6 rounded-xl shadow-lg flex flex-col justify-between hover:bg-gray-300/90 dark:hover:border-slate-700 transition-colors text-slate-700 dark:text-slate-300"
+                  >
+                    <div className="mb-4 space-y-2">
+                      <span className="text-xl font-bold text-blue-900 dark:text-white block">Room: {room.slug}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Admin: {room.admin?.name || "Unknown"}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Room ID: {room.id}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Created: {new Date(room.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => navigate(`/canvas/${room.id}`)}
+                        className="bg-blue-50 hover:bg-white text-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 dark:text-white font-bold py-2 px-5 rounded-lg transition-colors border border-blue-200 dark:border-transparent shadow-sm"
+                      >
+                        Enter
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => navigate(`/canvas/${room.id}`)}
-                      className="bg-blue-50 hover:bg-white text-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 dark:text-white font-bold py-2 px-5 rounded-lg transition-colors border border-blue-200 dark:border-transparent shadow-sm"
-                    >
-                      Enter
-                    </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-slate-600 dark:text-slate-500 text-lg">You haven't created any rooms yet.</p>
+            )}
+          </div>
+
+          {/* Joined Rooms */}
+          <div>
+            <h2 className="text-3xl font-semibold mb-6 text-blue-900 dark:text-slate-300">Joined Rooms</h2>
+            {joinedRooms.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {joinedRooms.map((room) => (
+                  <div
+                    key={room.id}
+                    className="bg-gray-200 dark:bg-slate-950/40 border border-transparent dark:border-slate-800 p-6 rounded-xl shadow-lg flex flex-col justify-between hover:bg-gray-300/90 dark:hover:border-slate-700 transition-colors text-slate-700 dark:text-slate-300"
+                  >
+                    <div className="mb-4 space-y-2">
+                      <span className="text-xl font-bold text-blue-900 dark:text-white block">Room: {room.slug}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Admin: {room.admin?.name || "Unknown"}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Room ID: {room.id}</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 block">Created: {new Date(room.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => navigate(`/canvas/${room.id}`)}
+                        className="bg-blue-50 hover:bg-white text-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 dark:text-white font-bold py-2 px-5 rounded-lg transition-colors border border-blue-200 dark:border-transparent shadow-sm"
+                      >
+                        Enter
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-slate-600 dark:text-slate-500 text-lg">You haven't joined or created any rooms yet.</p>
-          )}
+                ))}
+              </div>
+            ) : (
+              <p className="text-slate-600 dark:text-slate-500 text-lg">You haven't joined any rooms created by others yet.</p>
+            )}
+          </div>
         </div>
       </div>
 

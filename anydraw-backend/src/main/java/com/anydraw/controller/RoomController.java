@@ -59,9 +59,15 @@ public class RoomController {
 
         String userId = (String) principal;
         List<Room> rooms = roomService.getRoomsByAdmin(userId);
+        
+        List<com.anydraw.model.JoinedRoom> joinedRelations = roomService.getJoinedRoomsForUser(userId);
+        List<Room> joinedRooms = joinedRelations.stream()
+                .map(com.anydraw.model.JoinedRoom::getRoom)
+                .collect(java.util.stream.Collectors.toList());
 
         Map<String, Object> response = new HashMap<>();
         response.put("rooms", rooms);
+        response.put("joinedRooms", joinedRooms);
         return ResponseEntity.ok(response);
     }
 

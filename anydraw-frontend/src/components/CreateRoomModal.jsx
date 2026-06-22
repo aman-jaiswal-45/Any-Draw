@@ -70,16 +70,16 @@ export const CreateRoomModal = ({ isOpen, onClose, onRoomCreated }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl text-white">
+    <div className="fixed inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl text-slate-800 dark:text-white">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-2xl font-bold text-white">Create a New Room</h3>
-          <button onClick={handleClose} className="p-1 rounded-full hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
+          <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Create a New Room</h3>
+          <button onClick={handleClose} className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors">
             <X size={20} />
           </button>
         </div>
         <form onSubmit={handleSubmit}>
-          <p className="text-sm text-slate-300 mb-4">
+          <p className="text-sm text-slate-500 dark:text-slate-300 mb-4">
             Give your new collaborative space a name. This will be its unique identifier.
           </p>
           <input
@@ -87,24 +87,24 @@ export const CreateRoomModal = ({ isOpen, onClose, onRoomCreated }) => {
             value={roomName}
             onChange={(e) => setRoomName(e.target.value)}
             placeholder="e.g., project-brainstorm"
-            className="w-full p-3 bg-slate-900 border border-slate-700 rounded-md text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full p-3 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             autoFocus
           />
           
-          {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
+          {error && <p className="text-red-600 dark:text-red-400 text-sm mt-4">{error}</p>}
 
           <div className="mt-6 flex justify-end gap-4">
             <button
               type="button"
               onClick={handleClose}
-              className="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-md font-semibold transition-colors"
+              className="px-5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-white rounded-md font-semibold transition-colors border border-slate-300 dark:border-transparent"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading}
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-md font-semibold transition-colors disabled:bg-blue-600/50 disabled:cursor-not-allowed"
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-md font-semibold transition-colors disabled:bg-blue-600/50 disabled:cursor-not-allowed shadow-sm"
             >
               {isLoading ? "Creating..." : "Create & Join"}
             </button>

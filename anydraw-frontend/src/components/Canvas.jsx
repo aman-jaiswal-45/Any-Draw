@@ -17,13 +17,26 @@ import {
   Redo2,
 } from "lucide-react";
 import { Game } from "../draw/Game.js";
+import { useTheme } from "../context/ThemeContext.jsx";
 
 export default function Canvas({ roomId, socket }) {
   const canvasRef = useRef(null);
   const [game, setGame] = useState(undefined);
   const [selectedTool, setSelectedTool] = useState("pencil");
-  const [color, setColor] = useState("#ffffff");
+  const { isDark, theme, setTheme } = useTheme();
+  
+  // Set initial stroke color depending on dark/light mode
+  const [color, setColor] = useState(isDark ? "#ffffff" : "#000000");
   const [stroke, setStroke] = useState(2);
+
+  // Sync color if theme toggles and color is currently at default white/black
+  useEffect(() => {
+    if (!isDark && color === "#ffffff") {
+      setColor("#000000");
+    } else if (isDark && color === "#000000") {
+      setColor("#ffffff");
+    }
+  }, [isDark]);
 
   // Sync game tool and style whenever anything changes
   useEffect(() => {
@@ -68,13 +81,13 @@ export default function Canvas({ roomId, socket }) {
   }, [game]);
 
   return (
-    <div style={{ height: "100vh", overflow: "hidden", position: "relative", backgroundColor: "#0f172a" }}>
+    <div className="h-screen w-screen overflow-hidden relative bg-white dark:bg-[#0f172a] transition-colors duration-200">
       <canvas
         ref={canvasRef}
         width={window.innerWidth}
         height={window.innerHeight}
+        className="block bg-transparent"
         style={{
-          display: "block",
           cursor: selectedTool === "eraser" ? "crosshair" : "default",
         }}
       />
@@ -86,6 +99,7 @@ export default function Canvas({ roomId, socket }) {
         setColor={setColor}
         stroke={stroke}
         setStroke={setStroke}
+        isDark={isDark}
       />
     </div>
   );
@@ -99,6 +113,7 @@ function Topbar({
   setColor,
   stroke,
   setStroke,
+  isDark,
 }) {
   return (
     <div
@@ -112,7 +127,7 @@ function Topbar({
       }}
     >
       <div
-        className="flex flex-wrap bg-slate-900/80 p-1.5 rounded-lg border border-slate-700/50 items-center gap-1 shadow-2xl"
+        className="flex flex-wrap bg-white/95 dark:bg-slate-900/90 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 items-center gap-1 shadow-lg dark:shadow-2xl transition-colors duration-200"
         style={{ display: "flex", alignItems: "center", maxWidth: "90vw" }}
       >
         <IconButton
@@ -161,7 +176,7 @@ function Topbar({
           icon={<Eraser className="w-5 h-5" />}
         />
         
-        <div className="w-[1px] h-6 bg-slate-700 mx-1" />
+        <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
         <IconButton
           onClick={() => game?.undo()}
@@ -175,7 +190,7 @@ function Topbar({
           icon={<Redo2 className="w-5 h-5" />}
         />
 
-        <div className="w-[1px] h-6 bg-slate-700 mx-1" />
+        <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
         {/* color & stroke controls */}
         <div
@@ -213,7 +228,7 @@ function Topbar({
           />
         </div>
 
-        <div className="w-[1px] h-6 bg-slate-700 mx-1" />
+        <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
         {/* zoom/pan quick buttons */}
         <div className="flex gap-1">

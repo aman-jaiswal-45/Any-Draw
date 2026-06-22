@@ -283,7 +283,7 @@ export class Game {
         const dy = world.y - this.dragStartWorld.y;
         const preview = this.translateShape(this.dragOriginalShape, dx, dy);
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        this.ctx.fillStyle = "black";
+        this.ctx.fillStyle = this.getCanvasBgColor();
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.cameraX * this.zoom, -this.cameraY * this.zoom);
         for (const s of this.existingShapes) {
@@ -309,7 +309,7 @@ export class Game {
         const preview = this.resizeTool.applyResize(ev.offsetX, ev.offsetY);
         if (preview && this.resizeTool.getSelectedId()) {
           this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-          this.ctx.fillStyle = "black";
+          this.ctx.fillStyle = this.getCanvasBgColor();
           this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
           for (const s of this.existingShapes) {
             if (s.id === this.resizeTool.getSelectedId()) this.drawShape(preview);
@@ -658,8 +658,24 @@ export class Game {
   getStrokeWidthFor(shape) {
     return shape && (shape.strokeWidth ?? this.defaultStrokeWidth);
   }
+  getCanvasBgColor() {
+    return document.documentElement.classList.contains("dark") ? "#0f172a" : "#ffffff";
+  }
   getStrokeColorFor(shape) {
-    return shape && (shape.strokeColor ?? this.defaultStrokeColor);
+    if (!shape) return this.defaultStrokeColor;
+    const color = shape.strokeColor ?? this.defaultStrokeColor;
+    const isDark = document.documentElement.classList.contains("dark");
+    const lower = color.toLowerCase();
+    if (isDark) {
+      if (lower === "black" || lower === "#000000" || lower === "#000") {
+        return "#ffffff";
+      }
+    } else {
+      if (lower === "white" || lower === "#ffffff" || lower === "#fff") {
+        return "#000000";
+      }
+    }
+    return color;
   }
   drawRoundedDiamond(ctx, cx, cy, w, h, cornerRadius) {
     const top = { x: cx, y: cy - h / 2 };
@@ -694,7 +710,7 @@ export class Game {
     this.ctx.save();
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.fillStyle = "black";
+    this.ctx.fillStyle = this.getCanvasBgColor();
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.cameraX * this.zoom, -this.cameraY * this.zoom);
     for (const stored of this.existingShapes) {
@@ -721,8 +737,8 @@ export class Game {
           this.ctx.moveTo(shape.path[0][0], shape.path[0][1]);
           for (let i = 1; i < shape.path.length; i++) this.ctx.lineTo(shape.path[i][0], shape.path[i][1]);
         }
-        this.ctx.strokeStyle = shape.strokeColor;
-        this.ctx.lineWidth = shape.strokeWidth;
+        this.ctx.strokeStyle = strokeColor;
+        this.ctx.lineWidth = strokeWidth;
         this.ctx.lineCap = "round";
         this.ctx.lineJoin = "round";
         this.ctx.stroke();
@@ -771,14 +787,16 @@ export class Game {
   drawShape(shape) {
     const ctx = this.ctx;
     if (!shape) return;
+    const strokeColor = this.getStrokeColorFor(shape);
+    const strokeWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
     if (shape.type === "rect") {
-      ctx.strokeStyle = shape.strokeColor ?? this.defaultStrokeColor;
-      ctx.lineWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.strokeRect(shape.x, shape.y, shape.width, shape.height);
     } else if (shape.type === "circle") {
       ctx.beginPath();
-      ctx.strokeStyle = shape.strokeColor ?? this.defaultStrokeColor;
-      ctx.lineWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.arc(shape.centerX, shape.centerY, Math.abs(shape.radius), 0, Math.PI * 2);
       ctx.stroke();
       ctx.closePath();
@@ -788,16 +806,16 @@ export class Game {
         ctx.moveTo(shape.path[0][0], shape.path[0][1]);
         for (let i = 1; i < shape.path.length; i++) ctx.lineTo(shape.path[i][0], shape.path[i][1]);
       }
-      ctx.strokeStyle = shape.strokeColor;
-      ctx.lineWidth = shape.strokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.stroke();
       ctx.closePath();
     } else if (shape.type === "line") {
       ctx.beginPath();
-      ctx.strokeStyle = shape.strokeColor ?? this.defaultStrokeColor;
-      ctx.lineWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.moveTo(shape.startX, shape.startY);
       ctx.lineTo(shape.endX, shape.endY);
       ctx.stroke();
@@ -806,8 +824,8 @@ export class Game {
       const headlen = 15;
       const angle = Math.atan2(shape.endY - shape.startY, shape.endX - shape.startX);
       ctx.beginPath();
-      ctx.strokeStyle = shape.strokeColor ?? this.defaultStrokeColor;
-      ctx.lineWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.moveTo(shape.startX, shape.startY);
       ctx.lineTo(shape.endX, shape.endY);
       ctx.stroke();
@@ -824,8 +842,8 @@ export class Game {
       const w = shape.width / 2;
       const h = shape.height / 2;
       ctx.beginPath();
-      ctx.strokeStyle = shape.strokeColor ?? this.defaultStrokeColor;
-      ctx.lineWidth = shape.strokeWidth ?? this.defaultStrokeWidth;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
       ctx.moveTo(cx, cy - h);
       ctx.lineTo(cx + w, cy);
       ctx.lineTo(cx, cy + h);
@@ -834,7 +852,7 @@ export class Game {
       ctx.stroke();
     } else if (shape.type === "text") {
       ctx.font = `${shape.fontSize}px ${shape.fontFamily}`;
-      ctx.fillStyle = shape.strokeColor ?? this.defaultStrokeColor;
+      ctx.fillStyle = strokeColor;
       ctx.textAlign = shape.textAlign;
       ctx.textBaseline = shape.verticalAlign === "top" ? "top" : shape.verticalAlign === "middle" ? "middle" : "bottom";
       const words = (shape.text || "").split(/\s+/);

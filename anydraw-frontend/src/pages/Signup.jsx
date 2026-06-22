@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import Logo from "../components/Logo.jsx";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -50,19 +51,18 @@ export default function Signup() {
   return (
     <div className="bg-gradient-to-br from-red-600 via-blue-600 to-purple-600 min-h-screen text-white flex flex-col">
       <nav className="p-4">
-        <Link to="/" className="flex items-center gap-2">
-          <img src="/logo.png" alt="App Logo" className="w-10 h-10 object-contain" />
-          <span className="text-xl font-bold bg-white/90 bg-clip-text text-transparent">Any Draw</span>
+        <Link to="/" className="flex items-center">
+          <Logo className="h-16 w-auto" colorMode="dark" />
         </Link>
       </nav>
 
       <div className="flex flex-1 items-center justify-center py-12 px-4">
-        <div className="w-full max-w-md p-8 space-y-8 bg-white/10 backdrop-blur-md shadow-2xl rounded-2xl border border-white/20">
+        <div className="w-full max-w-md p-8 space-y-8 bg-white/80 dark:bg-white/10 border border-blue-600 dark:border-white/20 backdrop-blur-sm shadow-2xl rounded-2xl">
           <div className="text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-white">
+            <h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
               Create Your Account
             </h2>
-            <p className="mt-2 text-slate-200">
+            <p className="mt-2 text-slate-700 dark:text-slate-200">
               And start collaborating in seconds.
             </p>
           </div>
@@ -70,7 +70,7 @@ export default function Signup() {
           <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-4 rounded-md">
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1" htmlFor="name">Your Name</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1" htmlFor="name">Your Name</label>
                 <input
                   id="name"
                   type="text"
@@ -78,13 +78,13 @@ export default function Signup() {
                   onChange={(e) => setName(e.target.value)}
                   disabled={authLoading}
                   placeholder="John Doe"
-                  className="w-full p-3 bg-slate-950/30 border border-white/10 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full p-3 bg-white dark:bg-slate-950/30 border border-blue-300 dark:border-white/10 rounded-md text-slate-800 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-                {errors.name && <p className="text-red-300 text-xs mt-1 px-1">{errors.name}</p>}
+                {errors.name && <p className="text-red-500 dark:text-red-300 text-xs mt-1 px-1">{errors.name}</p>}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1" htmlFor="email">Email Address</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1" htmlFor="email">Email Address</label>
                 <input
                   id="email"
                   type="email"
@@ -92,13 +92,13 @@ export default function Signup() {
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={authLoading}
                   placeholder="your@email.com"
-                  className="w-full p-3 bg-slate-950/30 border border-white/10 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full p-3 bg-white dark:bg-slate-950/30 border border-blue-300 dark:border-white/10 rounded-md text-slate-800 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-                {errors.username && <p className="text-red-300 text-xs mt-1 px-1">{errors.username}</p>}
+                {errors.username && <p className="text-red-500 dark:text-red-300 text-xs mt-1 px-1">{errors.username}</p>}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1" htmlFor="password">Password</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1" htmlFor="password">Password</label>
                 <input
                   id="password"
                   type="password"
@@ -106,14 +106,14 @@ export default function Signup() {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={authLoading}
                   placeholder="••••••••"
-                  className="w-full p-3 bg-slate-950/30 border border-white/10 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full p-3 bg-white dark:bg-slate-950/30 border border-blue-300 dark:border-white/10 rounded-md text-slate-800 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-                {errors.password && <p className="text-red-300 text-xs mt-1 px-1">{errors.password}</p>}
+                {errors.password && <p className="text-red-500 dark:text-red-300 text-xs mt-1 px-1">{errors.password}</p>}
               </div>
             </div>
 
             {errors.general && (
-              <p className="text-red-300 text-sm text-center font-semibold pt-2">{errors.general}</p>
+              <p className="text-red-500 dark:text-red-300 text-sm text-center font-semibold pt-2">{errors.general}</p>
             )}
 
             <div>
@@ -127,9 +127,9 @@ export default function Signup() {
             </div>
           </form>
 
-          <div className="text-center text-sm text-slate-200">
+          <div className="text-center text-sm text-slate-700 dark:text-slate-200">
             Already have an account?{" "}
-            <Link to="/signin" className="font-medium text-blue-300 hover:text-blue-100 underline">
+            <Link to="/signin" className="font-medium text-blue-600 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-100 underline">
               Sign In
             </Link>
           </div>

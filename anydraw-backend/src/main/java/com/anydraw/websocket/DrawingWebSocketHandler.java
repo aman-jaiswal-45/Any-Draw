@@ -118,6 +118,9 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             case "reject_join":
                 handleRejectJoin(session, roomId, data);
                 break;
+            case "remove_user":
+                handleRemoveUser(session, roomId, data);
+                break;
             default:
                 System.out.println("Unknown WS action type: " + type);
         }
@@ -653,6 +656,17 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         Set<WebSocketSession> sessions = roomSessions.get(roomId);
         if (sessions == null) return;
 
+        String adminId = "";
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+            if (roomObj != null) {
+                adminId = roomObj.getAdmin().getId();
+            }
+        } catch (Exception e) {
+            // Ignore parse errors
+        }
+
         List<Map<String, String>> usersList = new ArrayList<>();
         for (WebSocketSession s : sessions) {
             if (s.isOpen()) {
@@ -679,6 +693,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             uNode.put("userId", u.get("userId"));
             uNode.put("userName", u.get("userName"));
             uNode.put("userEmail", u.get("userEmail"));
+            uNode.put("isHost", u.get("userId").equals(adminId));
         }
 
         broadcastToRoom(roomId, msg);
@@ -733,6 +748,43 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 }
             }
             pendingSessions.remove(roomId);
+        }
+    }
+
+    private void handleRemoveUser(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
+        String adminId = (String) adminSession.getAttributes().get("userId");
+        if (!data.has("userId")) return;
+        String targetUserId = data.get("userId").asText();
+
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            roomService.removeUserFromRoom(roomDbId, targetUserId, adminId);
+
+            Set<WebSocketSession> sessions = roomSessions.get(roomId);
+            WebSocketSession targetSession = null;
+            if (sessions != null) {
+                for (WebSocketSession s : sessions) {
+                    if (targetUserId.equals(s.getAttributes().get("userId"))) {
+                        targetSession = s;
+                        break;
+                    }
+                }
+            }
+
+            if (targetSession != null && targetSession.isOpen()) {
+                ObjectNode response = objectMapper.createObjectNode();
+                response.put("type", "user_removed");
+                response.put("roomId", roomId);
+                targetSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                targetSession.close(CloseStatus.NORMAL);
+                System.out.println("User " + targetUserId + " kicked/removed from Room: " + roomId);
+            }
+
+            broadcastCollaboratorList(roomId);
+
+        } catch (Exception e) {
+            System.err.println("Error in handleRemoveUser: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

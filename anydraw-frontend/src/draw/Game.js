@@ -459,6 +459,13 @@ export class Game {
       userId: targetUserId
     }));
   }
+  removeUser(targetUserId) {
+    this.socket.send(JSON.stringify({
+      type: "remove_user",
+      roomId: this.roomId,
+      userId: targetUserId
+    }));
+  }
   getLayers() {
     return this.existingShapes.slice();
   }
@@ -604,6 +611,11 @@ export class Game {
       if (parsed.type === "room_deleted") {
         this.socket.isTerminal = true;
         this.roomDeletedCallback?.();
+        return;
+      }
+      if (parsed.type === "user_removed") {
+        this.socket.isTerminal = true;
+        this.statusCallback?.("removed");
         return;
       }
 

@@ -210,4 +210,16 @@ public class RoomService {
             }
         });
     }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void removeUserFromRoom(Integer roomId, String userId, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the room administrator can remove participants");
+        }
+
+        joinedRoomRepository.deleteByUserIdAndRoomId(userId, roomId);
+    }
 }

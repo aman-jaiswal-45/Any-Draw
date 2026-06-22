@@ -13,4 +13,7 @@ public interface JoinedRoomRepository extends JpaRepository<JoinedRoom, Integer>
 
     @Transactional
     void deleteByRoomId(Integer roomId);
+
+    @Transactional
+    void deleteByUserIdAndRoomId(String userId, Integer roomId);
 }

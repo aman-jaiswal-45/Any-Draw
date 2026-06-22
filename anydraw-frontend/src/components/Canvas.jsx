@@ -20,6 +20,19 @@ import {
 import { Game } from "../draw/Game.js";
 import { useTheme } from "../context/ThemeContext.jsx";
 
+const getCurrentUserId = () => {
+  const token = localStorage.getItem("authToken");
+  if (!token) return null;
+  try {
+    const payloadBase64 = token.split(".")[1];
+    const decodedPayload = JSON.parse(atob(payloadBase64));
+    return decodedPayload.userId;
+  } catch (e) {
+    console.error("Error parsing JWT token:", e);
+    return null;
+  }
+};
+
 export default function Canvas({ roomId, socket }) {
   const canvasRef = useRef(null);
   const navigate = useNavigate();
@@ -34,6 +47,9 @@ export default function Canvas({ roomId, socket }) {
   const [approvalStatus, setApprovalStatus] = useState("checking");
   const [pendingRequests, setPendingRequests] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
+
+  const currentUserId = getCurrentUserId();
+  const isCurrentUserHost = collaborators.some((c) => c.userId === currentUserId && c.isHost);
 
   // Register callbacks on game once it's created
   useEffect(() => {
@@ -241,6 +257,32 @@ export default function Canvas({ roomId, socket }) {
         </div>
       )}
 
+      {approvalStatus === "removed" && (
+        <div className="absolute inset-0 z-[1000] flex flex-col justify-center items-center bg-slate-950 text-white px-6">
+          <div className="max-w-md w-full text-center space-y-8 bg-slate-900 p-8 rounded-2xl border border-red-900/40 shadow-2xl">
+            <div className="relative flex justify-center">
+              <div className="w-20 h-20 bg-red-950/40 border border-red-500/30 rounded-full flex items-center justify-center">
+                <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 21v-1a6 6 0 00-9-5.197M21 21v-1a6 6 0 00-3-4.82M18 10l3 3m0 0l-3 3m3-3H12" />
+                </svg>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-red-400 to-orange-400 bg-clip-text text-transparent">Access Revoked</h2>
+              <p className="text-slate-400 text-base">Access Revoked. You have been removed from this drawing room by the administrator.</p>
+            </div>
+            <div className="pt-4">
+              <button
+                onClick={() => navigate("/dashboard")}
+                className="w-full py-3 px-6 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl border border-slate-700 transition-colors shadow-lg"
+              >
+                Go to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Admin Pending Requests Panel */}
       {pendingRequests.length > 0 && (
         <div className="fixed top-4 right-4 z-[1000] max-w-sm w-full bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 p-4 rounded-xl shadow-2xl backdrop-blur-md">
@@ -296,6 +338,8 @@ export default function Canvas({ roomId, socket }) {
         setStroke={setStroke}
         isDark={isDark}
         collaborators={collaborators}
+        currentUserId={currentUserId}
+        isCurrentUserHost={isCurrentUserHost}
       />
     </div>
   );
@@ -311,8 +355,25 @@ function Topbar({
   setStroke,
   isDark,
   collaborators = [],
+  currentUserId,
+  isCurrentUserHost,
 }) {
   const [showCollaborators, setShowCollaborators] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (!showCollaborators) return;
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowCollaborators(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showCollaborators]);
+
   return (
     <div
       style={{
@@ -450,7 +511,7 @@ function Topbar({
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
         {/* Collaborators list trigger */}
-        <div className="relative">
+        <div ref={dropdownRef} className="relative">
           <button
             onClick={() => setShowCollaborators(!showCollaborators)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-sm transition-colors"
@@ -472,14 +533,39 @@ function Topbar({
                   <p className="text-xs text-slate-500 dark:text-slate-400">Just you in the room</p>
                 ) : (
                   collaborators.map((c) => (
-                    <div key={c.userId} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg">
-                      <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold uppercase">
-                        {c.userName.charAt(0)}
+                    <div key={c.userId} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg justify-between">
+                      <div className="flex items-center gap-2 overflow-hidden text-left">
+                        <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold uppercase shrink-0">
+                          {c.userName.charAt(0)}
+                        </div>
+                        <div className="overflow-hidden">
+                          <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate flex items-center gap-1.5">
+                            {c.userName}
+                            {c.isHost && (
+                              <span className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 text-[9px] px-1 py-0.2 rounded font-bold border border-yellow-500/20">
+                                Host
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{c.userEmail}</p>
+                        </div>
                       </div>
-                      <div className="overflow-hidden text-left">
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">{c.userName}</p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{c.userEmail}</p>
-                      </div>
+                      
+                      {isCurrentUserHost && !c.isHost && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to remove ${c.userName} from this room?`)) {
+                              game?.removeUser(c.userId);
+                            }
+                          }}
+                          className="p-1 rounded text-red-500 hover:bg-red-500/10 hover:text-red-600 transition-colors shrink-0"
+                          title="Remove user from canvas"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 21v-1a6 6 0 00-9-5.197M21 21v-1a6 6 0 00-3-4.82M18 10l3 3m0 0l-3 3m3-3H12" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   ))
                 )}

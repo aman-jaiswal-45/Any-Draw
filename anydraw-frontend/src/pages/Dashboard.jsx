@@ -68,6 +68,29 @@ export default function Dashboard() {
     navigate("/signin");
   };
 
+  const handleDeleteRoom = async (roomId, roomSlug) => {
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete the room "${roomSlug}"? This action cannot be undone and will delete all drawing data.`
+    );
+    if (!confirmDelete) return;
+
+    const token = localStorage.getItem("authToken");
+    try {
+      await axios.delete(`${HTTP_BACKEND_URL}/room/${roomId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // Refresh the rooms lists
+      const response = await axios.get(`${HTTP_BACKEND_URL}/rooms`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setRooms(response.data.rooms ?? []);
+      setJoinedRooms(response.data.joinedRooms ?? []);
+    } catch (err) {
+      console.error("Failed to delete room:", err);
+      alert("Failed to delete room. Please try again.");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-slate-900 text-white">
@@ -167,7 +190,14 @@ export default function Dashboard() {
                       <span className="text-sm text-slate-600 dark:text-slate-400 block">Room ID: {room.id}</span>
                       <span className="text-sm text-slate-600 dark:text-slate-400 block">Created: {new Date(room.createdAt).toLocaleString()}</span>
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => handleDeleteRoom(room.id, room.slug)}
+                        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/45 dark:hover:bg-red-900/45 dark:border-red-900/50 dark:text-red-400 font-bold py-2 px-4 rounded-lg transition-colors shadow-sm flex items-center"
+                        title="Delete Room"
+                      >
+                        Delete
+                      </button>
                       <button
                         onClick={() => navigate(`/canvas/${room.id}`)}
                         className="bg-blue-50 hover:bg-white text-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 dark:text-white font-bold py-2 px-5 rounded-lg transition-colors border border-blue-200 dark:border-transparent shadow-sm"

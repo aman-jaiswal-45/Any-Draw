@@ -85,4 +85,34 @@ public class RoomController {
                     return ResponseEntity.ok(response);
                 });
     }
+
+    @DeleteMapping("/room/{id}")
+    public ResponseEntity<?> deleteRoom(@PathVariable Integer id) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (principal == null || !(principal instanceof String)) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Unauthorized");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
+
+        String userId = (String) principal;
+        try {
+            roomService.deleteRoom(id, userId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Room deleted successfully");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+        } catch (org.springframework.security.access.AccessDeniedException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Internal server error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
 }

@@ -6,6 +6,7 @@ import com.anydraw.model.User;
 import com.anydraw.model.JoinedRoom;
 import com.anydraw.repository.RoomRepository;
 import com.anydraw.repository.JoinedRoomRepository;
+import com.anydraw.repository.ChatRepository;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -17,11 +18,18 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final UserService userService;
     private final JoinedRoomRepository joinedRoomRepository;
+    private final ChatRepository chatRepository;
 
-    public RoomService(RoomRepository roomRepository, UserService userService, JoinedRoomRepository joinedRoomRepository) {
+    public RoomService(
+            RoomRepository roomRepository,
+            UserService userService,
+            JoinedRoomRepository joinedRoomRepository,
+            ChatRepository chatRepository
+    ) {
         this.roomRepository = roomRepository;
         this.userService = userService;
         this.joinedRoomRepository = joinedRoomRepository;
+        this.chatRepository = chatRepository;
     }
 
     public Room createRoom(CreateRoomRequest request, String adminId) throws Exception {
@@ -74,5 +82,24 @@ public class RoomService {
 
     public List<JoinedRoom> getJoinedRoomsForUser(String userId) {
         return joinedRoomRepository.findByUserIdOrderByJoinedAtDesc(userId);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void deleteRoom(Integer roomId, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("You are not authorized to delete this room");
+        }
+
+        // 1. Cascade delete all chat entries (shapes) associated with this room
+        chatRepository.deleteByRoomId(roomId);
+
+        // 2. Cascade delete all joined room links associated with this room
+        joinedRoomRepository.deleteByRoomId(roomId);
+
+        // 3. Delete the room record itself
+        roomRepository.delete(room);
     }
 }

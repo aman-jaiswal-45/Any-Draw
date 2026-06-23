@@ -5,7 +5,8 @@ import { Eraser } from "./eraser";
 import { SelectTool } from "./select";
 import { ResizeTool } from "./resize";
 export class Game {
-  constructor(canvas, roomId, socket) {
+  constructor(canvas, roomId, socket, currentUserId) {
+    this.currentUserId = currentUserId;
     this.existingShapes = [];
     this.undoStack = [];
     this.redoStack = [];
@@ -29,6 +30,8 @@ export class Game {
     this.cameraStart = { x: 0, y: 0 };
     this.spacePressed = false;
     this.canWrite = true;
+    this.isLocked = false;
+    this.isHost = false;
     // dragging selected shapes
     this.isDraggingShape = false;
     this.dragStartWorld = { x: 0, y: 0 };
@@ -56,33 +59,36 @@ export class Game {
         this.cameraStart = { x: this.cameraX, y: this.cameraY };
         return;
       }
-      if (this.canWrite === false) {
+      if (this.canWrite === false || (this.isLocked && !this.isHost)) {
         return;
       }
       this.clicked = true;
       this.startX = world.x;
       this.startY = world.y;
       if (this.selectedTool === "pencil") {
-        this.saveStateForUndo();
         this.activePencil = new Pencil(this.defaultStrokeWidth, this.defaultStrokeColor);
         this.activePencil.addPoint(world.x, world.y);
         return;
       }
       if (this.selectedTool === "eraser") {
-        this.saveStateForUndo();
         if (!this.activeEraser) this.activeEraser = new Eraser(10);
-        const shapeId = this.activeEraser.findShapeAt(world.x, world.y, this.existingShapes);
+        const erasableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+        const shapeId = this.activeEraser.findShapeAt(world.x, world.y, erasableShapes);
         if (shapeId) {
-          this.existingShapes = this.existingShapes.filter((s) => s.id !== shapeId);
-          this.socket.send(JSON.stringify({ type: "delete", id: shapeId, roomId: this.roomId }));
-          this.clearCanvas();
-          this.notifyLayersChanged();
+          const stored = this.existingShapes.find((s) => s.id === shapeId);
+          if (stored) {
+            this.pushAction({ type: "delete", shapeId, shapeData: JSON.parse(JSON.stringify(stored.shape)) });
+            this.existingShapes = this.existingShapes.filter((s) => s.id !== shapeId);
+            this.socket.send(JSON.stringify({ type: "delete", id: shapeId, roomId: this.roomId }));
+            this.clearCanvas();
+            this.notifyLayersChanged();
+          }
         }
         return;
       }
       if (this.selectedTool === "select") {
-        this.saveStateForUndo();
-        const found = this.selectTool.findAt(screen.x, screen.y, this.existingShapes);
+        const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+        const found = this.selectTool.findAt(screen.x, screen.y, selectableShapes);
         this.selectedShapeId = found ?? null;
         this.resizeTool.setSelectedId(this.selectedShapeId);
         this.clearCanvas();
@@ -97,9 +103,9 @@ export class Game {
         return;
       }
       if (this.selectedTool === "resize") {
-        this.saveStateForUndo();
         if (!this.selectedShapeId) {
-          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, this.existingShapes);
+          const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, selectableShapes);
           this.selectedShapeId = found ?? null;
           this.resizeTool.setSelectedId(this.selectedShapeId);
           this.clearCanvas();
@@ -109,9 +115,11 @@ export class Game {
         if (!stored) return;
         const handle = this.resizeTool.hitTestHandles(ev.offsetX, ev.offsetY, stored.shape);
         if (handle) {
+          this.dragOriginalShape = JSON.parse(JSON.stringify(stored.shape));
           this.resizeTool.startResize(this.selectedShapeId, stored.shape, ev.offsetX, ev.offsetY, handle);
         } else {
-          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, this.existingShapes);
+          const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, selectableShapes);
           this.selectedShapeId = found ?? null;
           this.resizeTool.setSelectedId(this.selectedShapeId);
         }
@@ -126,7 +134,7 @@ export class Game {
         this.isPanning = false;
         return;
       }
-      if (this.canWrite === false) {
+      if (this.canWrite === false || (this.isLocked && !this.isHost)) {
         return;
       }
       const screen = this.getCanvasScreenCoords(ev);
@@ -135,10 +143,18 @@ export class Game {
       if (this.isDraggingShape && this.selectedShapeId && this.dragOriginalShape) {
         const dx = world.x - this.dragStartWorld.x;
         const dy = world.y - this.dragStartWorld.y;
-        const newShape = this.translateShape(this.dragOriginalShape, dx, dy);
-        const idx = this.existingShapes.findIndex((s) => s.id === this.selectedShapeId);
-        if (idx !== -1) this.existingShapes[idx].shape = newShape;
-        this.socket.send(JSON.stringify({ type: "update", id: this.selectedShapeId, shape: newShape, roomId: this.roomId }));
+        if (dx !== 0 || dy !== 0) {
+          const newShape = this.translateShape(this.dragOriginalShape, dx, dy);
+          this.pushAction({
+            type: "update",
+            shapeId: this.selectedShapeId,
+            oldShape: this.dragOriginalShape,
+            newShape: newShape
+          });
+          const idx = this.existingShapes.findIndex((s) => s.id === this.selectedShapeId);
+          if (idx !== -1) this.existingShapes[idx].shape = newShape;
+          this.socket.send(JSON.stringify({ type: "update", id: this.selectedShapeId, shape: newShape, roomId: this.roomId }));
+        }
         this.isDraggingShape = false;
         this.dragOriginalShape = null;
         this.clearCanvas();
@@ -146,14 +162,15 @@ export class Game {
         return;
       }
       if (this.selectedTool === "pencil" && this.activePencil) {
-        this.saveStateForUndo();
         const shape = {
           type: "pencil",
           path: this.activePencil.getPath(),
           strokeWidth: this.activePencil.getStrokeWidth(),
-          strokeColor: this.activePencil.getStrokeColor()
+          strokeColor: this.activePencil.getStrokeColor(),
+          createdBy: this.currentUserId
         };
         const pendingId2 = `pending-${Date.now()}`;
+        this.pushAction({ type: "create", shapeId: pendingId2, shapeData: shape });
         this.existingShapes.push({ id: pendingId2, shape, tempId: pendingId2 });
         this.clearCanvas();
         this.socket.send(JSON.stringify({ type: "chat", tempId: pendingId2, shape, roomId: this.roomId }));
@@ -162,16 +179,22 @@ export class Game {
         return;
       }
       if (this.selectedTool === "resize" && this.resizeTool.isResizing()) {
-        this.saveStateForUndo();
         const newShape = this.resizeTool.applyResize(ev.offsetX, ev.offsetY);
         const id = this.resizeTool.getSelectedId();
-        if (id && newShape) {
+        if (id && newShape && this.dragOriginalShape) {
+          this.pushAction({
+            type: "update",
+            shapeId: id,
+            oldShape: this.dragOriginalShape,
+            newShape: newShape
+          });
           const idx = this.existingShapes.findIndex((s) => s.id === id);
           if (idx !== -1) this.existingShapes[idx].shape = newShape;
           this.socket.send(JSON.stringify({ type: "update", id, shape: newShape, roomId: this.roomId }));
           this.clearCanvas();
           this.notifyLayersChanged();
         }
+        this.dragOriginalShape = null;
         this.resizeTool.finishResize();
         return;
       }
@@ -182,10 +205,8 @@ export class Game {
       const strokeWidth = this.defaultStrokeWidth;
       const strokeColor = this.defaultStrokeColor;
       if (selectedTool === "rect") {
-        this.saveStateForUndo();
-        shapeToSend = { type: "rect", x: this.startX, y: this.startY, width, height, strokeWidth, strokeColor };
+        shapeToSend = { type: "rect", x: this.startX, y: this.startY, width, height, strokeWidth, strokeColor, createdBy: this.currentUserId };
       } else if (selectedTool === "circle") {
-        this.saveStateForUndo();
         const radius = Math.sqrt(width * width + height * height) / 2;
         shapeToSend = {
           type: "circle",
@@ -193,22 +214,19 @@ export class Game {
           centerX: this.startX + width / 2,
           centerY: this.startY + height / 2,
           strokeWidth,
-          strokeColor
+          strokeColor,
+          createdBy: this.currentUserId
         };
       } else if (selectedTool === "line") {
-        this.saveStateForUndo();
-        shapeToSend = { type: "line", startX: this.startX, startY: this.startY, endX: world.x, endY: world.y, strokeWidth, strokeColor };
+        shapeToSend = { type: "line", startX: this.startX, startY: this.startY, endX: world.x, endY: world.y, strokeWidth, strokeColor, createdBy: this.currentUserId };
       } else if (selectedTool === "arrow") {
-        this.saveStateForUndo();
-        shapeToSend = { type: "arrow", startX: this.startX, startY: this.startY, endX: world.x, endY: world.y, strokeWidth, strokeColor };
+        shapeToSend = { type: "arrow", startX: this.startX, startY: this.startY, endX: world.x, endY: world.y, strokeWidth, strokeColor, createdBy: this.currentUserId };
       } else if (selectedTool === "diamond") {
-        this.saveStateForUndo();
         const centerX = this.startX + width / 2;
         const centerY = this.startY + height / 2;
         const cornerRadius = Math.min(Math.abs(width), Math.abs(height)) * 0.08 || 6;
-        shapeToSend = { type: "diamond", centerX, centerY, width: Math.abs(width), height: Math.abs(height), strokeWidth, strokeColor, cornerRadius };
+        shapeToSend = { type: "diamond", centerX, centerY, width: Math.abs(width), height: Math.abs(height), strokeWidth, strokeColor, cornerRadius, createdBy: this.currentUserId };
       } else if (selectedTool === "text") {
-        this.saveStateForUndo();
         const w = Math.abs(width);
         const h = Math.abs(height);
         const fontSize = Math.max(12, Math.abs(height));
@@ -225,7 +243,8 @@ export class Game {
           textAlign: "left",
           verticalAlign: "top",
           strokeWidth,
-          strokeColor
+          strokeColor,
+          createdBy: this.currentUserId
         };
         const input = document.createElement("textarea");
         const screenPos = this.worldToScreen(this.startX, this.startY);
@@ -250,6 +269,7 @@ export class Game {
         input.addEventListener("blur", () => {
           textShape.text = input.value;
           const pendingId2 = `pending-${Date.now()}`;
+          this.pushAction({ type: "create", shapeId: pendingId2, shapeData: textShape });
           this.existingShapes.push({ id: pendingId2, shape: textShape, tempId: pendingId2 });
           this.clearCanvas();
           this.socket.send(JSON.stringify({ type: "chat", tempId: pendingId2, shape: textShape, roomId: this.roomId }));
@@ -262,6 +282,7 @@ export class Game {
         return;
       }
       const pendingId = `pending-${Date.now()}`;
+      this.pushAction({ type: "create", shapeId: pendingId, shapeData: shapeToSend });
       this.existingShapes.push({ id: pendingId, shape: shapeToSend, tempId: pendingId });
       this.clearCanvas();
       this.socket.send(JSON.stringify({ type: "chat", tempId: pendingId, shape: shapeToSend, roomId: this.roomId }));
@@ -279,16 +300,14 @@ export class Game {
         this.cameraY = this.cameraStart.y - dy / this.zoom;
         this.clearCanvas();
         if (this.selectedTool === "eraser" && this.activeEraser) {
-          this.saveStateForUndo();
           this.activeEraser.drawPreview(this.ctx, screen.x, screen.y);
         }
         return;
       }
-      if (this.canWrite === false) {
+      if (this.canWrite === false || (this.isLocked && !this.isHost)) {
         return;
       }
       if (this.selectedTool === "select" && this.isDraggingShape && this.dragOriginalShape && this.selectedShapeId) {
-        this.saveStateForUndo();
         const dx = world.x - this.dragStartWorld.x;
         const dy = world.y - this.dragStartWorld.y;
         const preview = this.translateShape(this.dragOriginalShape, dx, dy);
@@ -308,14 +327,12 @@ export class Game {
         return;
       }
       if (this.selectedTool === "pencil" && this.activePencil && this.clicked) {
-        this.saveStateForUndo();
         this.activePencil.addPoint(world.x, world.y);
         this.clearCanvas();
         this.activePencil.draw(this.ctx);
         return;
       }
       if (this.selectedTool === "resize" && this.resizeTool.isResizing()) {
-        this.saveStateForUndo();
         const preview = this.resizeTool.applyResize(ev.offsetX, ev.offsetY);
         if (preview && this.resizeTool.getSelectedId()) {
           this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -331,7 +348,6 @@ export class Game {
         return;
       }
       if (this.selectedTool === "eraser") {
-        this.saveStateForUndo();
         this.clearCanvas();
         if (!this.activeEraser) this.activeEraser = new Eraser(10);
         this.activeEraser.drawPreview(this.ctx, screen.x, screen.y);
@@ -342,12 +358,10 @@ export class Game {
         this.ctx.save();
         this.ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.cameraX * this.zoom, -this.cameraY * this.zoom);
         if (this.selectedTool === "rect") {
-          this.saveStateForUndo();
           this.ctx.strokeStyle = this.defaultStrokeColor;
           this.ctx.lineWidth = this.defaultStrokeWidth;
           this.ctx.strokeRect(this.startX, this.startY, world.x - this.startX, world.y - this.startY);
         } else if (this.selectedTool === "circle") {
-          this.saveStateForUndo();
           const w = world.x - this.startX;
           const h = world.y - this.startY;
           const radius = Math.sqrt(w * w + h * h) / 2;
@@ -359,7 +373,6 @@ export class Game {
           this.ctx.lineWidth = this.defaultStrokeWidth;
           this.ctx.stroke();
         } else if (this.selectedTool === "line") {
-          this.saveStateForUndo();
           this.ctx.beginPath();
           this.ctx.moveTo(this.startX, this.startY);
           this.ctx.lineTo(world.x, world.y);
@@ -367,7 +380,6 @@ export class Game {
           this.ctx.lineWidth = this.defaultStrokeWidth;
           this.ctx.stroke();
         } else if (this.selectedTool === "arrow") {
-          this.saveStateForUndo();
           const headlen = 15;
           const dx = world.x - this.startX;
           const dy = world.y - this.startY;
@@ -385,7 +397,6 @@ export class Game {
           this.ctx.lineTo(world.x, world.y);
           this.ctx.stroke();
         } else if (this.selectedTool === "diamond") {
-          this.saveStateForUndo();
           const w = world.x - this.startX;
           const h = world.y - this.startY;
           const cx = this.startX + w / 2;
@@ -395,7 +406,6 @@ export class Game {
           this.ctx.lineWidth = this.defaultStrokeWidth;
           this.drawRoundedDiamond(this.ctx, cx, cy, Math.abs(w), Math.abs(h), cornerRadius);
         } else if (this.selectedTool === "text") {
-          this.saveStateForUndo();
           this.ctx.strokeStyle = "white";
           this.ctx.lineWidth = 1;
           this.ctx.setLineDash([6, 6]);
@@ -430,14 +440,8 @@ export class Game {
     window.addEventListener("keyup", this.keyUp);
     window.addEventListener("keydown", this.keyComboListener);
   }
-  saveState() {
-    const snapshot = JSON.parse(JSON.stringify(this.existingShapes));
-    this.undoStack.push(snapshot);
-    this.redoStack = [];
-  }
-  saveStateForUndo() {
-    const snapshot = JSON.parse(JSON.stringify(this.existingShapes));
-    this.undoStack.push(snapshot);
+  pushAction(action) {
+    this.undoStack.push(action);
     this.redoStack = [];
   }
   setLayersCallback(cb) {
@@ -455,12 +459,24 @@ export class Game {
   setRoomDeletedCallback(cb) {
     this.roomDeletedCallback = cb;
   }
+  setRoomLockCallback(cb) {
+    this.roomLockCallback = cb;
+  }
   setWritePermissionCallback(cb) {
     this.writePermissionCallback = cb;
   }
   setCanWrite(val) {
     this.canWrite = val;
     if (!val) {
+      this.setTool("select");
+    }
+  }
+  setIsHost(val) {
+    this.isHost = val;
+  }
+  setLocked(val) {
+    this.isLocked = val;
+    if (val && !this.isHost) {
       this.setTool("select");
     }
   }
@@ -493,6 +509,13 @@ export class Game {
       canWrite: canWrite
     }));
   }
+  toggleRoomLock(isLocked) {
+    this.socket.send(JSON.stringify({
+      type: "toggle_room_lock",
+      roomId: this.roomId,
+      isLocked: isLocked
+    }));
+  }
   getLayers() {
     return this.existingShapes.slice();
   }
@@ -500,10 +523,21 @@ export class Game {
     this.layersCallback?.(this.getLayers());
   }
   bringToFront(id) {
+    if (!this.isHost) return;
     const idx = this.existingShapes.findIndex((s) => s.id === id);
     if (idx === -1) return;
     const [item] = this.existingShapes.splice(idx, 1);
     this.existingShapes.push(item);
+    this.clearCanvas();
+    this.notifyLayersChanged();
+    this.sendReorder();
+  }
+  sendToBack(id) {
+    if (!this.isHost) return;
+    const idx = this.existingShapes.findIndex((s) => s.id === id);
+    if (idx === -1) return;
+    const [item] = this.existingShapes.splice(idx, 1);
+    this.existingShapes.unshift(item);
     this.clearCanvas();
     this.notifyLayersChanged();
     this.sendReorder();
@@ -557,32 +591,84 @@ export class Game {
     this.notifyLayersChanged();
   }
   undo() {
-    if (this.undoStack.length === 0) return;
-    const previous = this.undoStack.pop();
-    const current = JSON.parse(JSON.stringify(this.existingShapes));
-    this.redoStack.push(current);
-    this.existingShapes = previous;
-    this.clearCanvas();
-    this.notifyLayersChanged();
-    this.socket.send(JSON.stringify({
-      type: "undo",
-      roomId: this.roomId,
-      state: this.existingShapes
-    }));
+    while (this.undoStack.length > 0) {
+      const action = this.undoStack.pop();
+      if (action.type === "create") {
+        const stored = this.existingShapes.find((s) => s.id === action.shapeId);
+        if (!stored) {
+          continue;
+        }
+        this.existingShapes = this.existingShapes.filter((s) => s.id !== action.shapeId);
+        this.redoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "delete", id: action.shapeId, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      } else if (action.type === "delete") {
+        this.existingShapes.push({ id: action.shapeId, shape: action.shapeData, tempId: action.shapeId });
+        this.redoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "chat", tempId: action.shapeId, shape: action.shapeData, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      } else if (action.type === "update") {
+        const stored = this.existingShapes.find((s) => s.id === action.shapeId);
+        if (!stored) {
+          continue;
+        }
+        this.existingShapes = this.existingShapes.map((s) => {
+          if (s.id === action.shapeId) {
+            return { ...s, shape: action.oldShape };
+          }
+          return s;
+        });
+        this.redoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "update", id: action.shapeId, shape: action.oldShape, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      }
+    }
   }
   redo() {
-    if (this.redoStack.length === 0) return;
-    const next = this.redoStack.pop();
-    const current = JSON.parse(JSON.stringify(this.existingShapes));
-    this.undoStack.push(current);
-    this.existingShapes = next;
-    this.clearCanvas();
-    this.notifyLayersChanged();
-    this.socket.send(JSON.stringify({
-      type: "redo",
-      roomId: this.roomId,
-      state: this.existingShapes
-    }));
+    while (this.redoStack.length > 0) {
+      const action = this.redoStack.pop();
+      if (action.type === "create") {
+        this.existingShapes.push({ id: action.shapeId, shape: action.shapeData, tempId: action.shapeId });
+        this.undoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "chat", tempId: action.shapeId, shape: action.shapeData, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      } else if (action.type === "delete") {
+        const stored = this.existingShapes.find((s) => s.id === action.shapeId);
+        if (!stored) {
+          continue;
+        }
+        this.existingShapes = this.existingShapes.filter((s) => s.id !== action.shapeId);
+        this.undoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "delete", id: action.shapeId, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      } else if (action.type === "update") {
+        const stored = this.existingShapes.find((s) => s.id === action.shapeId);
+        if (!stored) {
+          continue;
+        }
+        this.existingShapes = this.existingShapes.map((s) => {
+          if (s.id === action.shapeId) {
+            return { ...s, shape: action.newShape };
+          }
+          return s;
+        });
+        this.undoStack.push(action);
+        this.socket.send(JSON.stringify({ type: "update", id: action.shapeId, shape: action.newShape, roomId: this.roomId }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
+      }
+    }
   }
   initHandlers() {
     this.socket.onmessage = (event) => {
@@ -608,6 +694,10 @@ export class Game {
         if (parsed.canWrite !== undefined) {
           this.setCanWrite(parsed.canWrite);
           this.writePermissionCallback?.(parsed.canWrite);
+        }
+        if (parsed.isLocked !== undefined) {
+          this.setLocked(parsed.isLocked);
+          this.roomLockCallback?.(parsed.isLocked);
         }
         const serverShapes = parsed.shapes || [];
         this.existingShapes = serverShapes.map((s) => ({
@@ -654,6 +744,11 @@ export class Game {
         this.writePermissionCallback?.(parsed.canWrite);
         return;
       }
+      if (parsed.type === "room_lock_changed") {
+        this.setLocked(parsed.isLocked);
+        this.roomLockCallback?.(parsed.isLocked);
+        return;
+      }
 
       if (parsed.type === "room_state" || parsed.type === "undo" || parsed.type === "redo") {
         if (parsed.type === "room_state") {
@@ -661,6 +756,10 @@ export class Game {
           if (parsed.canWrite !== undefined) {
             this.setCanWrite(parsed.canWrite);
             this.writePermissionCallback?.(parsed.canWrite);
+          }
+          if (parsed.isLocked !== undefined) {
+            this.setLocked(parsed.isLocked);
+            this.roomLockCallback?.(parsed.isLocked);
           }
         }
         const serverShapes = parsed.shapes || [];
@@ -680,6 +779,13 @@ export class Game {
           const idx = this.existingShapes.findIndex((s) => s.tempId === tempId || s.id === tempId);
           if (idx !== -1) {
             this.existingShapes[idx] = { id: serverId, shape: serverShape };
+            // Update action stacks mapped to tempId
+            for (const action of this.undoStack) {
+              if (action.shapeId === tempId) action.shapeId = serverId;
+            }
+            for (const action of this.redoStack) {
+              if (action.shapeId === tempId) action.shapeId = serverId;
+            }
             this.clearCanvas();
             this.notifyLayersChanged();
             return;

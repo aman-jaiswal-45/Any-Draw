@@ -92,11 +92,33 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
         // Validate write permission for drawing actions
         if (type.equals("chat") || type.equals("update") || type.equals("delete") || type.equals("undo") || type.equals("redo")) {
-            @SuppressWarnings("unchecked")
-            Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes().get("permissions");
-            if (permissions == null || !permissions.getOrDefault(roomId, false)) {
-                System.out.println("Blocked unauthorized draw action '" + type + "' from user: " + session.getAttributes().get("userId"));
-                return;
+            String userId = (String) session.getAttributes().get("userId");
+            boolean isAdmin = false;
+            try {
+                Integer roomDbId = Integer.parseInt(roomId);
+                com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+                if (roomObj != null && roomObj.getAdmin().getId().equals(userId)) {
+                    isAdmin = true;
+                }
+            } catch (Exception e) {
+                // Ignore parse errors
+            }
+
+            if (!isAdmin) {
+                // 1. Check if room is globally locked in memory
+                RoomState roomState = activeRooms.get(roomId);
+                if (roomState != null && roomState.isLocked()) {
+                    System.out.println("Blocked write action '" + type + "' from user: " + userId + " - Room is globally frozen.");
+                    return;
+                }
+
+                // 2. Check individual collaborator permissions
+                @SuppressWarnings("unchecked")
+                Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes().get("permissions");
+                if (permissions == null || !permissions.getOrDefault(roomId, false)) {
+                    System.out.println("Blocked unauthorized draw action '" + type + "' from user: " + userId);
+                    return;
+                }
             }
         }
 
@@ -108,13 +130,16 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 handleLeaveRoom(session, roomId);
                 break;
             case "chat":
-                handleCreateShape(roomId, data);
+                handleCreateShape(session, roomId, data);
                 break;
             case "update":
-                handleUpdateShape(roomId, data);
+                handleUpdateShape(session, roomId, data);
                 break;
             case "delete":
-                handleDeleteShape(roomId, data);
+                handleDeleteShape(session, roomId, data);
+                break;
+            case "reorder":
+                handleReorder(session, roomId, data);
                 break;
             case "undo":
                 handleUndo(roomId);
@@ -133,6 +158,9 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 break;
             case "toggle_write_permission":
                 handleToggleWritePermission(session, roomId, data);
+                break;
+            case "toggle_room_lock":
+                handleToggleRoomLock(session, roomId, data);
                 break;
             default:
                 System.out.println("Unknown WS action type: " + type);
@@ -179,6 +207,9 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             RoomState roomState = activeRooms.get(roomId);
             if (roomState == null) {
                 roomState = new RoomState();
+                if (roomObj != null) {
+                    roomState.setLocked(roomObj.getIsLocked());
+                }
                 try {
                     List<Chat> existingChats = chatService.getChatsByRoomId(roomDbId);
                     for (Chat entry : existingChats) {
@@ -204,6 +235,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             response.put("type", "room_state");
             response.put("roomId", roomId);
             response.put("canWrite", canWrite);
+            response.put("isLocked", roomState.isLocked());
             ArrayNode shapesNode = response.putArray("shapes");
             synchronized (roomState) {
                 for (StoredShape shape : roomState.getShapes()) {
@@ -327,12 +359,28 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void handleCreateShape(String roomId, JsonNode data) {
+    private boolean isUserAdmin(String roomId, String userId) {
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+            return roomObj != null && roomObj.getAdmin().getId().equals(userId);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void handleCreateShape(WebSocketSession session, String roomId, JsonNode data) {
         RoomState roomState = activeRooms.get(roomId);
         if (roomState == null) return;
 
         String tempId = data.has("tempId") ? data.get("tempId").asText() : null;
         JsonNode shape = data.get("shape");
+        String userId = (String) session.getAttributes().get("userId");
+
+        // Inject createdBy in shape metadata
+        if (shape instanceof ObjectNode) {
+            ((ObjectNode) shape).put("createdBy", userId);
+        }
 
         StoredShape newShape;
         String shapeId = "local-" + System.currentTimeMillis();
@@ -356,21 +404,51 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         broadcastToRoom(roomId, broadcast);
     }
 
-    private void handleUpdateShape(String roomId, JsonNode data) {
+    private void handleUpdateShape(WebSocketSession session, String roomId, JsonNode data) {
         RoomState roomState = activeRooms.get(roomId);
         if (roomState == null) return;
 
         String shapeId = data.get("id").asText();
         JsonNode shape = data.get("shape");
+        String userId = (String) session.getAttributes().get("userId");
+        boolean isAdmin = isUserAdmin(roomId, userId);
 
         synchronized (roomState) {
-            roomState.saveState();
+            // Find existing shape
+            StoredShape existingShape = null;
             for (StoredShape s : roomState.getShapes()) {
                 if (s.getId().equals(shapeId)) {
-                    s.setShape(shape);
+                    existingShape = s;
                     break;
                 }
             }
+
+            if (existingShape == null) {
+                return;
+            }
+
+            // Verify ownership
+            String createdBy = null;
+            if (existingShape.getShape().has("createdBy")) {
+                createdBy = existingShape.getShape().get("createdBy").asText();
+            }
+
+            if (!isAdmin && (createdBy == null || !createdBy.equals(userId))) {
+                System.out.println("Blocked unauthorized update shape request for shape " + shapeId + " from user " + userId);
+                return;
+            }
+
+            // Enforce createdBy field in updated shape
+            if (shape instanceof ObjectNode) {
+                if (createdBy != null) {
+                    ((ObjectNode) shape).put("createdBy", createdBy);
+                } else {
+                    ((ObjectNode) shape).remove("createdBy");
+                }
+            }
+
+            roomState.saveState();
+            existingShape.setShape(shape);
         }
 
         // Broadcast shape update
@@ -383,15 +461,41 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         broadcastToRoom(roomId, broadcast);
     }
 
-    private void handleDeleteShape(String roomId, JsonNode data) {
+    private void handleDeleteShape(WebSocketSession session, String roomId, JsonNode data) {
         RoomState roomState = activeRooms.get(roomId);
         if (roomState == null) return;
 
         String shapeId = data.get("id").asText();
+        String userId = (String) session.getAttributes().get("userId");
+        boolean isAdmin = isUserAdmin(roomId, userId);
 
         synchronized (roomState) {
+            // Find existing shape
+            StoredShape existingShape = null;
+            for (StoredShape s : roomState.getShapes()) {
+                if (s.getId().equals(shapeId)) {
+                    existingShape = s;
+                    break;
+                }
+            }
+
+            if (existingShape == null) {
+                return;
+            }
+
+            // Verify ownership
+            String createdBy = null;
+            if (existingShape.getShape().has("createdBy")) {
+                createdBy = existingShape.getShape().get("createdBy").asText();
+            }
+
+            if (!isAdmin && (createdBy == null || !createdBy.equals(userId))) {
+                System.out.println("Blocked unauthorized delete shape request for shape " + shapeId + " from user " + userId);
+                return;
+            }
+
             roomState.saveState();
-            roomState.getShapes().removeIf(s -> s.getId().equals(shapeId));
+            roomState.getShapes().remove(existingShape);
         }
 
         // Broadcast deletion
@@ -403,72 +507,54 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         broadcastToRoom(roomId, broadcast);
     }
 
-    private void handleUndo(String roomId) {
+    private void handleReorder(WebSocketSession session, String roomId, JsonNode data) {
+        String userId = (String) session.getAttributes().get("userId");
+        if (!isUserAdmin(roomId, userId)) {
+            System.out.println("Blocked unauthorized reorder request from user " + userId + " - only host is permitted.");
+            return;
+        }
+
         RoomState roomState = activeRooms.get(roomId);
         if (roomState == null) return;
 
+        JsonNode orderNode = data.get("order");
+        if (orderNode == null || !orderNode.isArray()) return;
+
         synchronized (roomState) {
-            if (roomState.getUndoStack().isEmpty()) return;
-            
-            // Push current state to redo
-            List<StoredShape> currentSnapshot = new ArrayList<>();
+            // Reorder shapes in RoomState
+            Map<String, StoredShape> shapeMap = new HashMap<>();
             for (StoredShape s : roomState.getShapes()) {
-                currentSnapshot.add(new StoredShape(s.getId(), s.getShape()));
+                shapeMap.put(s.getId(), s);
             }
-            roomState.getRedoStack().push(currentSnapshot);
 
-            // Pop previous state
-            roomState.setShapes(roomState.getUndoStack().pop());
+            List<StoredShape> newList = new ArrayList<>();
+            for (JsonNode idNode : orderNode) {
+                String id = idNode.asText();
+                StoredShape s = shapeMap.remove(id);
+                if (s != null) {
+                    newList.add(s);
+                }
+            }
+            // Add any remaining shapes (in case of shape id mismatches or additions)
+            newList.addAll(shapeMap.values());
+            roomState.setShapes(newList);
         }
 
-        // Broadcast undo shapes array
+        // Broadcast reorder to everyone
         ObjectNode broadcast = objectMapper.createObjectNode();
-        broadcast.put("type", "undo");
+        broadcast.put("type", "reorder");
+        broadcast.set("order", orderNode);
         broadcast.put("roomId", roomId);
-        ArrayNode shapesNode = broadcast.putArray("shapes");
-        synchronized (roomState) {
-            for (StoredShape shape : roomState.getShapes()) {
-                ObjectNode shapeNode = shapesNode.addObject();
-                shapeNode.put("id", shape.getId());
-                shapeNode.set("shape", shape.getShape());
-            }
-        }
 
         broadcastToRoom(roomId, broadcast);
     }
 
+    private void handleUndo(String roomId) {
+        // Deprecated: client-side smart undo handles individual mutations
+    }
+
     private void handleRedo(String roomId) {
-        RoomState roomState = activeRooms.get(roomId);
-        if (roomState == null) return;
-
-        synchronized (roomState) {
-            if (roomState.getRedoStack().isEmpty()) return;
-
-            // Push current state to undo
-            List<StoredShape> currentSnapshot = new ArrayList<>();
-            for (StoredShape s : roomState.getShapes()) {
-                currentSnapshot.add(new StoredShape(s.getId(), s.getShape()));
-            }
-            roomState.getUndoStack().push(currentSnapshot);
-
-            // Pop next state
-            roomState.setShapes(roomState.getRedoStack().pop());
-        }
-
-        // Broadcast redo shapes array
-        ObjectNode broadcast = objectMapper.createObjectNode();
-        broadcast.put("type", "redo");
-        broadcast.put("roomId", roomId);
-        ArrayNode shapesNode = broadcast.putArray("shapes");
-        synchronized (roomState) {
-            for (StoredShape shape : roomState.getShapes()) {
-                ObjectNode shapeNode = shapesNode.addObject();
-                shapeNode.put("id", shape.getId());
-                shapeNode.set("shape", shape.getShape());
-            }
-        }
-
-        broadcastToRoom(roomId, broadcast);
+        // Deprecated: client-side smart redo handles individual mutations
     }
 
     private void broadcastToRoom(String roomId, JsonNode message) {
@@ -574,12 +660,14 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                         .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
                 permissions.put(roomId, true);
 
+                RoomState roomState = activeRooms.get(roomId);
+
                 ObjectNode response = objectMapper.createObjectNode();
                 response.put("type", "join_approved");
                 response.put("roomId", roomId);
                 response.put("canWrite", true);
+                response.put("isLocked", roomState != null && roomState.isLocked());
 
-                RoomState roomState = activeRooms.get(roomId);
                 if (roomState == null) {
                     roomState = new RoomState();
                     try {
@@ -874,6 +962,34 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
         } catch (Exception e) {
             System.err.println("Error in handleToggleWritePermission: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void handleToggleRoomLock(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
+        String adminId = (String) adminSession.getAttributes().get("userId");
+        if (!data.has("isLocked")) return;
+        boolean isLocked = data.get("isLocked").asBoolean();
+
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            roomService.updateRoomLockStatus(roomDbId, isLocked, adminId);
+
+            // Update in-memory state
+            RoomState roomState = activeRooms.get(roomId);
+            if (roomState != null) {
+                roomState.setLocked(isLocked);
+            }
+
+            // Broadcast lock state change to everyone in the room
+            ObjectNode response = objectMapper.createObjectNode();
+            response.put("type", "room_lock_changed");
+            response.put("roomId", roomId);
+            response.put("isLocked", isLocked);
+            broadcastToRoom(roomId, response);
+
+        } catch (Exception e) {
+            System.err.println("Error in handleToggleRoomLock: " + e.getMessage());
             e.printStackTrace();
         }
     }

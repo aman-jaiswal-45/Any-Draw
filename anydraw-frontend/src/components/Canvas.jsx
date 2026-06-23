@@ -16,6 +16,8 @@ import {
   Move,
   Undo2,
   Redo2,
+  ArrowUpToLine,
+  ArrowDownToLine,
 } from "lucide-react";
 import { Game } from "../draw/Game.js";
 import { useTheme } from "../context/ThemeContext.jsx";
@@ -48,6 +50,7 @@ export default function Canvas({ roomId, socket }) {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
   const [canWrite, setCanWrite] = useState(true);
+  const [isLocked, setIsLocked] = useState(false);
 
   const currentUserId = getCurrentUserId();
   const isCurrentUserHost = collaborators.some((c) => c.userId === currentUserId && c.isHost);
@@ -85,7 +88,17 @@ export default function Canvas({ roomId, socket }) {
     game.setWritePermissionCallback((val) => {
       setCanWrite(val);
     });
+
+    game.setRoomLockCallback((val) => {
+      setIsLocked(val);
+    });
   }, [game]);
+
+  useEffect(() => {
+    if (game) {
+      game.setIsHost(isCurrentUserHost);
+    }
+  }, [game, isCurrentUserHost]);
 
   // Sync color if theme toggles and color is currently at default white/black
   useEffect(() => {
@@ -108,7 +121,7 @@ export default function Canvas({ roomId, socket }) {
   // Initialize Game once
   useEffect(() => {
     if (!canvasRef.current) return;
-    const g = new Game(canvasRef.current, roomId, socket);
+    const g = new Game(canvasRef.current, roomId, socket, currentUserId);
     setGame(g);
 
     g.setZoom(1);
@@ -334,13 +347,25 @@ export default function Canvas({ roomId, socket }) {
         }}
       />
 
-      {!canWrite && !isCurrentUserHost && (
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
-          <svg className="w-4 h-4 text-amber-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          <span className="text-xs font-bold text-slate-100 tracking-wide uppercase">View-Only Mode</span>
-        </div>
+      {!isCurrentUserHost && (
+        <>
+          {!canWrite && (
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
+              <svg className="w-4 h-4 text-amber-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span className="text-xs font-bold text-slate-100 tracking-wide uppercase">View-Only Mode</span>
+            </div>
+          )}
+          {canWrite && isLocked && (
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-red-950/95 border border-red-800/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
+              <svg className="w-4 h-4 text-red-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span className="text-xs font-bold text-red-200 tracking-wide uppercase">Canvas Frozen by Host</span>
+            </div>
+          )}
+        </>
       )}
 
       <Topbar
@@ -356,6 +381,7 @@ export default function Canvas({ roomId, socket }) {
         currentUserId={currentUserId}
         isCurrentUserHost={isCurrentUserHost}
         canWrite={canWrite}
+        isLocked={isLocked}
       />
     </div>
   );
@@ -374,8 +400,9 @@ function Topbar({
   currentUserId,
   isCurrentUserHost,
   canWrite,
+  isLocked,
 }) {
-  const isDrawingDisabled = !canWrite && !isCurrentUserHost;
+  const isDrawingDisabled = (!canWrite || isLocked) && !isCurrentUserHost;
   const activeTool = isDrawingDisabled ? "select" : selectedTool;
   const [showCollaborators, setShowCollaborators] = useState(false);
   const dropdownRef = useRef(null);
@@ -413,53 +440,62 @@ function Topbar({
           onClick={() => setSelectedTool("pencil")}
           activated={activeTool === "pencil"}
           icon={<Pencil className="w-5 h-5" />}
+          title="Pencil"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("rect")}
           activated={activeTool === "rect"}
           icon={<RectangleHorizontalIcon className="w-5 h-5" />}
+          title="Rectangle"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("circle")}
           activated={activeTool === "circle"}
           icon={<Circle className="w-5 h-5" />}
+          title="Circle"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("line")}
           activated={activeTool === "line"}
           icon={<Minus className="w-5 h-5" />}
+          title="Line"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("arrow")}
           activated={activeTool === "arrow"}
           icon={<MoveUpRight className="w-5 h-5" />}
+          title="Arrow"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("diamond")}
           activated={activeTool === "diamond"}
           icon={<Diamond className="w-5 h-5" />}
+          title="Diamond"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("text")}
           activated={activeTool === "text"}
           icon={<Type className="w-5 h-5" />}
+          title="Text"
         />
         <IconButton
           onClick={() => setSelectedTool("select")}
           activated={activeTool === "select"}
           icon={<MousePointer2 className="w-5 h-5" />}
+          title="Selection"
         />
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("eraser")}
           activated={activeTool === "eraser"}
           icon={<Eraser className="w-5 h-5" />}
+          title="Eraser"
         />
         
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
@@ -469,6 +505,7 @@ function Topbar({
           onClick={() => game?.undo()}
           activated={false}
           icon={<Undo2 className="w-5 h-5" />}
+          title="Undo (Ctrl+Z)"
         />
 
         <IconButton
@@ -476,7 +513,37 @@ function Topbar({
           onClick={() => game?.redo()}
           activated={false}
           icon={<Redo2 className="w-5 h-5" />}
+          title="Redo (Ctrl+Y)"
         />
+
+        {isCurrentUserHost && (
+          <>
+            <IconButton
+              onClick={() => {
+                if (game?.selectedShapeId) {
+                  game.bringToFront(game.selectedShapeId);
+                } else {
+                  alert("Please select a shape first using the Selection tool.");
+                }
+              }}
+              activated={false}
+              icon={<ArrowUpToLine className="w-5 h-5" />}
+              title="Bring to Front"
+            />
+            <IconButton
+              onClick={() => {
+                if (game?.selectedShapeId) {
+                  game.sendToBack(game.selectedShapeId);
+                } else {
+                  alert("Please select a shape first using the Selection tool.");
+                }
+              }}
+              activated={false}
+              icon={<ArrowDownToLine className="w-5 h-5" />}
+              title="Send to Back"
+            />
+          </>
+        )}
 
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
@@ -526,20 +593,51 @@ function Topbar({
             onClick={() => game?.setZoom((game?.getZoom() || 1) * 1.12)}
             activated={false}
             icon={<ZoomIn className="w-5 h-5" />}
+            title="Zoom In"
           />
           <IconButton
             onClick={() => game?.setZoom((game?.getZoom() || 1) / 1.12)}
             activated={false}
             icon={<ZoomOut className="w-5 h-5" />}
+            title="Zoom Out"
           />
           <IconButton
             onClick={() => game?.resetCamera()}
             activated={false}
             icon={<Move className="w-5 h-5" />}
+            title="Reset Viewport"
           />
         </div>
 
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+
+        {/* Room Lock Button (Host only) */}
+        {isCurrentUserHost && (
+          <button
+            onClick={() => {
+              game?.toggleRoomLock(!isLocked);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold border transition-all ${
+              isLocked
+                ? "bg-red-500/10 border-red-500/30 text-red-500 hover:bg-red-500/20"
+                : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350"
+            }`}
+            title={isLocked ? "Unlock Canvas for Collaborators" : "Freeze Canvas for Collaborators"}
+          >
+            {isLocked ? (
+              <svg className="w-5 h-5 animate-pulse text-red-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-slate-500 dark:text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+              </svg>
+            )}
+            <span className="hidden md:inline">{isLocked ? "Canvas Frozen" : "Freeze"}</span>
+          </button>
+        )}
+
+        {isCurrentUserHost && <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />}
 
         {/* Collaborators list trigger */}
         <div ref={dropdownRef} className="relative">

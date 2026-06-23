@@ -247,4 +247,17 @@ public class RoomService {
         joined.setCanWrite(canWrite);
         joinedRoomRepository.save(joined);
     }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void updateRoomLockStatus(Integer roomId, boolean isLocked, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the room administrator can lock/unlock the canvas");
+        }
+
+        room.setIsLocked(isLocked);
+        roomRepository.save(room);
+    }
 }

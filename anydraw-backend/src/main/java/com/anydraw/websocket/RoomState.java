@@ -8,6 +8,7 @@ import java.util.List;
 
 @Data
 public class RoomState {
+    private boolean isLocked = false;
     private List<StoredShape> shapes = new ArrayList<>();
     private Deque<List<StoredShape>> undoStack = new LinkedList<>();
     private Deque<List<StoredShape>> redoStack = new LinkedList<>();

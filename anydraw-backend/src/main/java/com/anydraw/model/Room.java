@@ -28,6 +28,10 @@ public class Room {
     @JoinColumn(name = "admin_id", nullable = false)
     private User admin;
 
+    @Column(name = "is_locked", nullable = false, columnDefinition = "tinyint(1) default 0")
+    @Builder.Default
+    private Boolean isLocked = false;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();

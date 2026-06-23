@@ -135,7 +135,15 @@ export class ResizeTool {
       return s;
     } else if (s.type === "circle") {
       const newBBox = this.computeNewBBoxFromHandle(origBBox, this.activeHandle, dx, dy);
-      const size = Math.max(newBBox.w, newBBox.h, 6);
+      let size;
+      if (this.activeHandle === "e" || this.activeHandle === "w") {
+        size = newBBox.w;
+      } else if (this.activeHandle === "n" || this.activeHandle === "s") {
+        size = newBBox.h;
+      } else {
+        size = Math.min(newBBox.w, newBBox.h);
+      }
+      size = Math.max(size, 6);
       const cx = newBBox.x + newBBox.w / 2;
       const cy = newBBox.y + newBBox.h / 2;
       s.centerX = cx;

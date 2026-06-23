@@ -10,6 +10,9 @@ export class Game {
     this.existingShapes = [];
     this.undoStack = [];
     this.redoStack = [];
+    this.activeLasers = new Map();
+    this.currentUserName = "You";
+    this.role = "WRITE";
     // input state
     this.clicked = false;
     this.startX = 0;
@@ -57,6 +60,21 @@ export class Game {
         this.isPanning = true;
         this.panStart = { x: screen.x, y: screen.y };
         this.cameraStart = { x: this.cameraX, y: this.cameraY };
+        return;
+      }
+      if (this.selectedTool === "laser") {
+        if (this.role === "READ_ONLY") {
+          return;
+        }
+        this.clicked = true;
+        this.socket.send(JSON.stringify({
+          type: "laser_move",
+          roomId: this.roomId,
+          x: world.x,
+          y: world.y,
+          userName: this.currentUserName
+        }));
+        this.updateLocalLaser(world.x, world.y);
         return;
       }
       if (this.canWrite === false || (this.isLocked && !this.isHost)) {
@@ -130,6 +148,15 @@ export class Game {
     // mouseup
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.mouseUpHandler = (ev) => {
+      if (this.selectedTool === "laser" && this.clicked) {
+        this.clicked = false;
+        this.socket.send(JSON.stringify({
+          type: "laser_stop",
+          roomId: this.roomId
+        }));
+        this.stopLocalLaser();
+        return;
+      }
       if (this.isPanning) {
         this.isPanning = false;
         return;
@@ -302,6 +329,17 @@ export class Game {
         if (this.selectedTool === "eraser" && this.activeEraser) {
           this.activeEraser.drawPreview(this.ctx, screen.x, screen.y);
         }
+        return;
+      }
+      if (this.selectedTool === "laser" && this.clicked) {
+        this.socket.send(JSON.stringify({
+          type: "laser_move",
+          roomId: this.roomId,
+          x: world.x,
+          y: world.y,
+          userName: this.currentUserName
+        }));
+        this.updateLocalLaser(world.x, world.y);
         return;
       }
       if (this.canWrite === false || (this.isLocked && !this.isHost)) {
@@ -501,12 +539,13 @@ export class Game {
       userId: targetUserId
     }));
   }
-  toggleWritePermission(targetUserId, canWrite) {
+  toggleWritePermission(targetUserId, role) {
     this.socket.send(JSON.stringify({
       type: "toggle_write_permission",
       roomId: this.roomId,
       userId: targetUserId,
-      canWrite: canWrite
+      role: role,
+      canWrite: role === "WRITE"
     }));
   }
   toggleRoomLock(isLocked) {
@@ -541,6 +580,64 @@ export class Game {
     this.clearCanvas();
     this.notifyLayersChanged();
     this.sendReorder();
+  }
+  clearBoard() {
+    if (!this.isHost) return;
+    if (this.existingShapes.length === 0) return;
+    this.pushAction({
+      type: "clear",
+      shapes: JSON.parse(JSON.stringify(this.existingShapes))
+    });
+    this.existingShapes = [];
+    this.selectedShapeId = null;
+    this.selectTool.clearSelection();
+    this.resizeTool.finishResize();
+    this.clearCanvas();
+    this.notifyLayersChanged();
+    this.socket.send(JSON.stringify({
+      type: "clear",
+      roomId: this.roomId
+    }));
+  }
+  updateLocalLaser(x, y) {
+    const laser = this.activeLasers.get(this.currentUserId) || { userName: "You", points: [] };
+    laser.lastActive = Date.now();
+    laser.points.push([x, y, Date.now()]);
+    if (laser.points.length > 150) laser.points.shift();
+    this.activeLasers.set(this.currentUserId, laser);
+    this.clearCanvas();
+    this.scheduleLaserFade();
+  }
+  stopLocalLaser() {
+    this.activeLasers.delete(this.currentUserId);
+    this.clearCanvas();
+  }
+  scheduleLaserFade() {
+    if (this.laserFadeTimeout) return;
+    this.laserFadeTimeout = setTimeout(() => {
+      this.laserFadeTimeout = null;
+      let hasActive = false;
+      const now = Date.now();
+      for (const [uid, laser] of this.activeLasers.entries()) {
+        // Keep points less than 4000ms old, but preserve the last one so the pointer dot doesn't disappear
+        laser.points = laser.points.filter((pt, index) => {
+          if (index === laser.points.length - 1) return true;
+          return now - pt[2] < 4000;
+        });
+
+        if (now - laser.lastActive > 8000 && laser.points.length <= 1) {
+          this.activeLasers.delete(uid);
+        } else {
+          if (laser.points.length > 0) {
+            hasActive = true;
+          }
+        }
+      }
+      this.clearCanvas();
+      if (hasActive || this.activeLasers.size > 0) {
+        this.scheduleLaserFade();
+      }
+    }, 30);
   }
   sendReorder() {
     const order = this.existingShapes.map((s) => s.id);
@@ -627,6 +724,20 @@ export class Game {
         this.clearCanvas();
         this.notifyLayersChanged();
         break;
+      } else if (action.type === "clear") {
+        this.existingShapes = JSON.parse(JSON.stringify(action.shapes));
+        this.redoStack.push(action);
+        for (const s of this.existingShapes) {
+          this.socket.send(JSON.stringify({
+            type: "chat",
+            tempId: s.id,
+            shape: s.shape,
+            roomId: this.roomId
+          }));
+        }
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
       }
     }
   }
@@ -667,6 +778,19 @@ export class Game {
         this.clearCanvas();
         this.notifyLayersChanged();
         break;
+      } else if (action.type === "clear") {
+        this.existingShapes = [];
+        this.selectedShapeId = null;
+        this.selectTool.clearSelection();
+        this.resizeTool.finishResize();
+        this.undoStack.push(action);
+        this.socket.send(JSON.stringify({
+          type: "clear",
+          roomId: this.roomId
+        }));
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        break;
       }
     }
   }
@@ -691,9 +815,14 @@ export class Game {
       }
       if (parsed.type === "join_approved") {
         this.statusCallback?.("approved");
-        if (parsed.canWrite !== undefined) {
+        if (parsed.role !== undefined) {
+          this.role = parsed.role;
+          this.setCanWrite(parsed.role === "WRITE");
+          this.writePermissionCallback?.(parsed.role === "WRITE", parsed.role);
+        } else if (parsed.canWrite !== undefined) {
+          this.role = parsed.canWrite ? "WRITE" : "READ_ONLY";
           this.setCanWrite(parsed.canWrite);
-          this.writePermissionCallback?.(parsed.canWrite);
+          this.writePermissionCallback?.(parsed.canWrite, this.role);
         }
         if (parsed.isLocked !== undefined) {
           this.setLocked(parsed.isLocked);
@@ -726,7 +855,10 @@ export class Game {
         return;
       }
       if (parsed.type === "collaborators_list") {
-        this.collaboratorsCallback?.(parsed.collaborators || []);
+        const list = parsed.collaborators || [];
+        const me = list.find((c) => c.userId === this.currentUserId);
+        if (me) this.currentUserName = me.userName;
+        this.collaboratorsCallback?.(list);
         return;
       }
       if (parsed.type === "room_deleted") {
@@ -740,8 +872,15 @@ export class Game {
         return;
       }
       if (parsed.type === "write_permission_changed") {
-        this.setCanWrite(parsed.canWrite);
-        this.writePermissionCallback?.(parsed.canWrite);
+        if (parsed.role !== undefined) {
+          this.role = parsed.role;
+          this.setCanWrite(parsed.role === "WRITE");
+          this.writePermissionCallback?.(parsed.role === "WRITE", parsed.role);
+        } else if (parsed.canWrite !== undefined) {
+          this.role = parsed.canWrite ? "WRITE" : "READ_ONLY";
+          this.setCanWrite(parsed.canWrite);
+          this.writePermissionCallback?.(parsed.canWrite, this.role);
+        }
         return;
       }
       if (parsed.type === "room_lock_changed") {
@@ -749,13 +888,43 @@ export class Game {
         this.roomLockCallback?.(parsed.isLocked);
         return;
       }
+      if (parsed.type === "clear") {
+        this.existingShapes = [];
+        this.selectedShapeId = null;
+        this.selectTool.clearSelection();
+        this.resizeTool.finishResize();
+        this.clearCanvas();
+        this.notifyLayersChanged();
+        return;
+      }
+      if (parsed.type === "laser_move") {
+        const uid = parsed.userId;
+        const laser = this.activeLasers.get(uid) || { userName: parsed.userName, points: [] };
+        laser.lastActive = Date.now();
+        laser.points.push([parsed.x, parsed.y, Date.now()]);
+        if (laser.points.length > 150) laser.points.shift();
+        this.activeLasers.set(uid, laser);
+        this.clearCanvas();
+        this.scheduleLaserFade();
+        return;
+      }
+      if (parsed.type === "laser_stop") {
+        this.activeLasers.delete(parsed.userId);
+        this.clearCanvas();
+        return;
+      }
 
       if (parsed.type === "room_state" || parsed.type === "undo" || parsed.type === "redo") {
         if (parsed.type === "room_state") {
           this.statusCallback?.("approved");
-          if (parsed.canWrite !== undefined) {
+          if (parsed.role !== undefined) {
+            this.role = parsed.role;
+            this.setCanWrite(parsed.role === "WRITE");
+            this.writePermissionCallback?.(parsed.role === "WRITE", parsed.role);
+          } else if (parsed.canWrite !== undefined) {
+            this.role = parsed.canWrite ? "WRITE" : "READ_ONLY";
             this.setCanWrite(parsed.canWrite);
-            this.writePermissionCallback?.(parsed.canWrite);
+            this.writePermissionCallback?.(parsed.canWrite, this.role);
           }
           if (parsed.isLocked !== undefined) {
             this.setLocked(parsed.isLocked);
@@ -1015,6 +1184,98 @@ export class Game {
       this.selectTool.drawSelection(this.ctx, this.existingShapes);
       const stored = this.existingShapes.find((s) => s.id === this.selectedShapeId);
       if (stored) this.resizeTool.drawHandles(this.ctx, stored.shape);
+    }
+    // Draw lasers
+    const now = Date.now();
+    for (const [uid, laser] of this.activeLasers.entries()) {
+      if (laser.points && laser.points.length > 0) {
+        const lastPt = laser.points[laser.points.length - 1];
+        
+        // Render tail segments with a gradient opacity fade out and thicker stroke width
+        if (laser.points.length > 1) {
+          // Draw a soft glowing outer under-layer for the tail first (glow effect)
+          this.ctx.save();
+          this.ctx.shadowBlur = 12;
+          this.ctx.shadowColor = "rgba(239, 68, 68, 0.65)";
+          for (let i = 1; i < laser.points.length; i++) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(laser.points[i - 1][0], laser.points[i - 1][1]);
+            this.ctx.lineTo(laser.points[i][0], laser.points[i][1]);
+            
+            // Age-based fade out and tapering
+            const age = now - laser.points[i][2];
+            const lifeRatio = Math.max(0, Math.min(1, 1 - age / 4000));
+            const opacity = lifeRatio * 0.22;
+            
+            this.ctx.strokeStyle = `rgba(239, 68, 68, ${opacity})`;
+            this.ctx.lineWidth = lifeRatio * 14; // Wider glow tail
+            this.ctx.lineCap = "round";
+            this.ctx.lineJoin = "round";
+            this.ctx.stroke();
+            this.ctx.closePath();
+          }
+          this.ctx.restore();
+
+          // Draw the sharp core tail layer on top
+          for (let i = 1; i < laser.points.length; i++) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(laser.points[i - 1][0], laser.points[i - 1][1]);
+            this.ctx.lineTo(laser.points[i][0], laser.points[i][1]);
+            
+            const age = now - laser.points[i][2];
+            const lifeRatio = Math.max(0, Math.min(1, 1 - age / 4000));
+            const opacity = lifeRatio * 0.85;
+            
+            this.ctx.strokeStyle = `rgba(255, 60, 60, ${opacity})`;
+            this.ctx.lineWidth = lifeRatio * 7; // Thinner core tail
+            this.ctx.lineCap = "round";
+            this.ctx.lineJoin = "round";
+            this.ctx.stroke();
+            this.ctx.closePath();
+          }
+        }
+        
+        // Multi-layered glowing pointer dot (outer diffuse, middle hot glow, inner solid core)
+        this.ctx.save();
+        this.ctx.shadowBlur = 14;
+        this.ctx.shadowColor = "rgba(239, 68, 68, 0.9)";
+
+        // Outer glow
+        this.ctx.beginPath();
+        this.ctx.arc(lastPt[0], lastPt[1], 22, 0, Math.PI * 2);
+        this.ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        this.ctx.fill();
+        this.ctx.closePath();
+
+        // Middle glow
+        this.ctx.beginPath();
+        this.ctx.arc(lastPt[0], lastPt[1], 13, 0, Math.PI * 2);
+        this.ctx.fillStyle = "rgba(239, 68, 68, 0.28)";
+        this.ctx.fill();
+        this.ctx.closePath();
+
+        // Red core
+        this.ctx.beginPath();
+        this.ctx.arc(lastPt[0], lastPt[1], 6.5, 0, Math.PI * 2);
+        this.ctx.fillStyle = "#ef4444";
+        this.ctx.fill();
+        this.ctx.closePath();
+
+        this.ctx.restore();
+
+        // White hot center (drawn without shadow blur to stay sharp)
+        this.ctx.beginPath();
+        this.ctx.arc(lastPt[0], lastPt[1], 3.0, 0, Math.PI * 2);
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.fill();
+        this.ctx.closePath();
+
+        // User label text
+        this.ctx.fillStyle = "rgba(239, 68, 68, 0.95)";
+        this.ctx.font = "bold 11px sans-serif";
+        this.ctx.textAlign = "center";
+        this.ctx.fillText(laser.userName, lastPt[0], lastPt[1] - 18);
+      }
     }
     this.ctx.restore();
   }

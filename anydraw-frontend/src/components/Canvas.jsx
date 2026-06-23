@@ -18,6 +18,10 @@ import {
   Redo2,
   ArrowUpToLine,
   ArrowDownToLine,
+  Sparkles,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Game } from "../draw/Game.js";
 import { useTheme } from "../context/ThemeContext.jsx";
@@ -50,6 +54,7 @@ export default function Canvas({ roomId, socket }) {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
   const [canWrite, setCanWrite] = useState(true);
+  const [role, setRole] = useState("WRITE");
   const [isLocked, setIsLocked] = useState(false);
 
   const currentUserId = getCurrentUserId();
@@ -85,8 +90,15 @@ export default function Canvas({ roomId, socket }) {
       setApprovalStatus("deleted");
     });
 
-    game.setWritePermissionCallback((val) => {
+    game.setWritePermissionCallback((val, newRole) => {
       setCanWrite(val);
+      const roleStr = newRole || (val ? "WRITE" : "READ_ONLY");
+      setRole(roleStr);
+      if (roleStr === "LASER_ONLY") {
+        setSelectedTool("laser");
+      } else if (roleStr === "READ_ONLY") {
+        setSelectedTool("select");
+      }
     });
 
     game.setRoomLockCallback((val) => {
@@ -349,7 +361,7 @@ export default function Canvas({ roomId, socket }) {
 
       {!isCurrentUserHost && (
         <>
-          {!canWrite && (
+          {role === "READ_ONLY" && (
             <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
               <svg className="w-4 h-4 text-amber-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -357,7 +369,13 @@ export default function Canvas({ roomId, socket }) {
               <span className="text-xs font-bold text-slate-100 tracking-wide uppercase">View-Only Mode</span>
             </div>
           )}
-          {canWrite && isLocked && (
+          {role === "LASER_ONLY" && (
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-amber-950/95 border border-amber-800/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
+              <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+              <span className="text-xs font-bold text-amber-200 tracking-wide uppercase">Laser Pointer Only</span>
+            </div>
+          )}
+          {role === "WRITE" && isLocked && (
             <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-red-950/95 border border-red-800/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
               <svg className="w-4 h-4 text-red-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -381,6 +399,7 @@ export default function Canvas({ roomId, socket }) {
         currentUserId={currentUserId}
         isCurrentUserHost={isCurrentUserHost}
         canWrite={canWrite}
+        role={role}
         isLocked={isLocked}
       />
     </div>
@@ -400,12 +419,46 @@ function Topbar({
   currentUserId,
   isCurrentUserHost,
   canWrite,
+  role,
   isLocked,
 }) {
-  const isDrawingDisabled = (!canWrite || isLocked) && !isCurrentUserHost;
-  const activeTool = isDrawingDisabled ? "select" : selectedTool;
+  const isDrawingDisabled = (role !== "WRITE" || isLocked) && !isCurrentUserHost;
+  const activeTool = isDrawingDisabled ? (selectedTool === "laser" ? "laser" : "select") : selectedTool;
   const [showCollaborators, setShowCollaborators] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   const dropdownRef = useRef(null);
+
+  const sortedCollaborators = [...collaborators].sort((a, b) => {
+    if (a.isHost && !b.isHost) return -1;
+    if (!a.isHost && b.isHost) return 1;
+    return (a.userName || "").localeCompare(b.userName || "");
+  });
+
+  const toolIcons = {
+    pencil: <Pencil className="w-5 h-5" />,
+    rect: <RectangleHorizontalIcon className="w-5 h-5" />,
+    circle: <Circle className="w-5 h-5" />,
+    line: <Minus className="w-5 h-5" />,
+    arrow: <MoveUpRight className="w-5 h-5" />,
+    diamond: <Diamond className="w-5 h-5" />,
+    text: <Type className="w-5 h-5" />,
+    select: <MousePointer2 className="w-5 h-5" />,
+    eraser: <Eraser className="w-5 h-5" />,
+    laser: <Sparkles className="w-5 h-5 text-red-500 animate-pulse" />,
+  };
+
+  const toolNames = {
+    pencil: "Pencil",
+    rect: "Rectangle",
+    circle: "Circle",
+    line: "Line",
+    arrow: "Arrow",
+    diamond: "Diamond",
+    text: "Text",
+    select: "Selection",
+    eraser: "Eraser",
+    laser: "Laser Pointer",
+  };
 
   useEffect(() => {
     if (!showCollaborators) return;
@@ -419,6 +472,38 @@ function Topbar({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showCollaborators]);
+
+  if (!isExpanded) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: 10,
+          left: 10,
+          zIndex: 999,
+        }}
+      >
+        <div
+          className="flex bg-white/95 dark:bg-slate-900/90 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 items-center gap-1 shadow-lg dark:shadow-2xl transition-colors duration-200"
+          style={{ display: "flex", alignItems: "center" }}
+        >
+          <IconButton
+            onClick={() => setIsExpanded(true)}
+            activated={false}
+            icon={<ChevronRight className="w-5 h-5" />}
+            title="Expand Toolbar"
+          />
+          <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+          <IconButton
+            onClick={() => setIsExpanded(true)}
+            activated={true}
+            icon={toolIcons[activeTool]}
+            title={`Active Tool: ${toolNames[activeTool]} (Click to expand)`}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -435,6 +520,15 @@ function Topbar({
         className="flex flex-wrap bg-white/95 dark:bg-slate-900/90 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 items-center gap-1 shadow-lg dark:shadow-2xl transition-colors duration-200"
         style={{ display: "flex", alignItems: "center", maxWidth: "90vw" }}
       >
+        <IconButton
+          onClick={() => setIsExpanded(false)}
+          activated={false}
+          icon={<ChevronLeft className="w-5 h-5" />}
+          title="Collapse Toolbar"
+        />
+        
+        <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+
         <IconButton
           disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("pencil")}
@@ -497,6 +591,13 @@ function Topbar({
           icon={<Eraser className="w-5 h-5" />}
           title="Eraser"
         />
+        <IconButton
+          disabled={role === "READ_ONLY" && !isCurrentUserHost}
+          onClick={() => setSelectedTool("laser")}
+          activated={activeTool === "laser"}
+          icon={<Sparkles className={`w-5 h-5 text-red-500 animate-pulse ${(role === "READ_ONLY" && !isCurrentUserHost) ? "opacity-30 pointer-events-none" : ""}`} />}
+          title={role === "READ_ONLY" && !isCurrentUserHost ? "Laser Pointer (Disabled in View-Only)" : "Laser Pointer"}
+        />
         
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
@@ -541,6 +642,16 @@ function Topbar({
               activated={false}
               icon={<ArrowDownToLine className="w-5 h-5" />}
               title="Send to Back"
+            />
+            <IconButton
+              onClick={() => {
+                if (window.confirm("Are you sure you want to clear the entire canvas? This can be undone.")) {
+                  game?.clearBoard();
+                }
+              }}
+              activated={false}
+              icon={<Trash2 className="w-5 h-5 text-red-500 hover:text-red-650" />}
+              title="Clear Canvas"
             />
           </>
         )}
@@ -661,7 +772,7 @@ function Topbar({
                 {collaborators.length === 0 ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">Just you in the room</p>
                 ) : (
-                  collaborators.map((c) => (
+                  sortedCollaborators.map((c) => (
                     <div key={c.userId} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg justify-between">
                       <div className="flex items-center gap-2 overflow-hidden text-left">
                         <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold uppercase shrink-0">
@@ -675,13 +786,28 @@ function Topbar({
                                 Host
                               </span>
                             )}
-                            {!c.canWrite && !c.isHost && (
-                              <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[9px] px-1 py-0.2 rounded font-bold border border-amber-500/20 flex items-center gap-0.5" title="Read-Only Mode">
-                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                                </svg>
-                                Read-Only
-                              </span>
+                            {!c.isHost && (
+                              <>
+                                {c.role === "LASER_ONLY" && (
+                                  <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-amber-500/20 flex items-center gap-0.5" title="Laser Pointer Only">
+                                    <Sparkles className="w-2.5 h-2.5 text-amber-500" />
+                                    Laser Only
+                                  </span>
+                                )}
+                                {c.role === "READ_ONLY" && (
+                                  <span className="bg-slate-500/10 text-slate-600 dark:text-slate-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-slate-500/20 flex items-center gap-0.5" title="Read-Only Mode">
+                                    <svg className="w-2.5 h-2.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                    </svg>
+                                    Read-Only
+                                  </span>
+                                )}
+                                {(c.role === "WRITE" || !c.role) && (
+                                  <span className="bg-green-500/10 text-green-600 dark:text-green-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-green-500/20 flex items-center gap-0.5" title="Editor (Can Write)">
+                                    Editor
+                                  </span>
+                                )}
+                              </>
                             )}
                           </p>
                           <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{c.userEmail}</p>
@@ -689,29 +815,19 @@ function Topbar({
                       </div>
                       
                       {isCurrentUserHost && !c.isHost && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          {/* Draw permission toggle button */}
-                          <button
-                            onClick={() => {
-                              game?.toggleWritePermission(c.userId, !c.canWrite);
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Role Select Dropdown */}
+                          <select
+                            value={c.role || (c.canWrite ? "WRITE" : "READ_ONLY")}
+                            onChange={(e) => {
+                              game?.toggleWritePermission(c.userId, e.target.value);
                             }}
-                            className={`p-1 rounded transition-colors ${
-                              c.canWrite
-                                ? "text-green-500 hover:bg-green-500/10 hover:text-green-600"
-                                : "text-amber-500 hover:bg-amber-500/10 hover:text-amber-605"
-                            }`}
-                            title={c.canWrite ? "Set to Read-Only Mode" : "Set to Write Mode"}
+                            className="bg-transparent border border-slate-200 dark:border-slate-800 text-[10px] font-semibold rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-350 focus:outline-none cursor-pointer"
                           >
-                            {c.canWrite ? (
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                              </svg>
-                            )}
-                          </button>
+                            <option value="WRITE" className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Editor</option>
+                            <option value="LASER_ONLY" className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Laser Only</option>
+                            <option value="READ_ONLY" className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Read-Only</option>
+                          </select>
 
                           {/* Kick button */}
                           <button
@@ -720,7 +836,7 @@ function Topbar({
                                 game?.removeUser(c.userId);
                               }
                             }}
-                            className="p-1 rounded text-red-500 hover:bg-red-500/10 hover:text-red-650 transition-colors"
+                            className="p-1 rounded text-red-500 hover:bg-red-500/10 hover:text-red-650 transition-colors cursor-pointer"
                             title="Remove user from canvas"
                           >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

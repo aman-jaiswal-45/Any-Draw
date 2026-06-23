@@ -228,12 +228,21 @@ public class RoomService {
         if (room == null) return false;
         if (room.getAdmin().getId().equals(userId)) return true;
         return joinedRoomRepository.findByUserIdAndRoomId(userId, roomId)
-                .map(JoinedRoom::getCanWrite)
+                .map(jr -> "WRITE".equalsIgnoreCase(jr.getRole()))
                 .orElse(false);
     }
 
+    public String getUserRole(Integer roomId, String userId) {
+        Room room = roomRepository.findById(roomId).orElse(null);
+        if (room == null) return "READ_ONLY";
+        if (room.getAdmin().getId().equals(userId)) return "WRITE";
+        return joinedRoomRepository.findByUserIdAndRoomId(userId, roomId)
+                .map(JoinedRoom::getRole)
+                .orElse("READ_ONLY");
+    }
+
     @org.springframework.transaction.annotation.Transactional
-    public void updateUserWritePermission(Integer roomId, String userId, boolean canWrite, String adminId) {
+    public void updateUserRole(Integer roomId, String userId, String role, String adminId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found"));
 
@@ -244,8 +253,14 @@ public class RoomService {
         JoinedRoom joined = joinedRoomRepository.findByUserIdAndRoomId(userId, roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Collaborator is not in this room"));
 
-        joined.setCanWrite(canWrite);
+        joined.setRole(role);
+        joined.setCanWrite("WRITE".equalsIgnoreCase(role));
         joinedRoomRepository.save(joined);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void updateUserWritePermission(Integer roomId, String userId, boolean canWrite, String adminId) {
+        updateUserRole(roomId, userId, canWrite ? "WRITE" : "READ_ONLY", adminId);
     }
 
     @org.springframework.transaction.annotation.Transactional

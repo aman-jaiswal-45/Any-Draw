@@ -47,6 +47,29 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         this.objectMapper = objectMapper;
     }
 
+    @jakarta.annotation.PreDestroy
+    public void onShutdown() {
+        System.out.println("Spring Boot is shutting down cleanly. Persisting all active room states...");
+        for (Map.Entry<String, RoomState> entry : activeRooms.entrySet()) {
+            String roomId = entry.getKey();
+            RoomState roomState = entry.getValue();
+            if (roomState != null && !roomState.getShapes().isEmpty()) {
+                try {
+                    Integer roomDbId = Integer.parseInt(roomId);
+                    String adminId = "";
+                    com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+                    if (roomObj != null) {
+                        adminId = roomObj.getAdmin().getId();
+                    }
+                    chatService.persistRoomChats(roomDbId, adminId, roomState.getShapes());
+                    System.out.println("Successfully persisted " + roomState.getShapes().size() + " shapes for Room ID: " + roomId + " on shutdown.");
+                } catch (Exception e) {
+                    System.err.println("Failed to persist Room: " + roomId + " on shutdown. Error: " + e.getMessage());
+                }
+            }
+        }
+    }
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String query = session.getUri().getQuery();
@@ -112,11 +135,37 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                     return;
                 }
 
-                // 2. Check individual collaborator permissions
+                // 2. Check individual collaborator permissions (must have WRITE role)
                 @SuppressWarnings("unchecked")
-                Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes().get("permissions");
-                if (permissions == null || !permissions.getOrDefault(roomId, false)) {
+                Map<String, String> roles = (Map<String, String>) session.getAttributes().get("roles");
+                String userRole = (roles != null) ? roles.getOrDefault(roomId, "READ_ONLY") : "READ_ONLY";
+                if (!"WRITE".equalsIgnoreCase(userRole)) {
                     System.out.println("Blocked unauthorized draw action '" + type + "' from user: " + userId);
+                    return;
+                }
+            }
+        }
+
+        // Validate laser pointer permission
+        if (type.equals("laser_move") || type.equals("laser_stop")) {
+            String userId = (String) session.getAttributes().get("userId");
+            boolean isAdmin = false;
+            try {
+                Integer roomDbId = Integer.parseInt(roomId);
+                com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+                if (roomObj != null && roomObj.getAdmin().getId().equals(userId)) {
+                    isAdmin = true;
+                }
+            } catch (Exception e) {
+                // Ignore parse errors
+            }
+
+            if (!isAdmin) {
+                @SuppressWarnings("unchecked")
+                Map<String, String> roles = (Map<String, String>) session.getAttributes().get("roles");
+                String userRole = (roles != null) ? roles.getOrDefault(roomId, "READ_ONLY") : "READ_ONLY";
+                if ("READ_ONLY".equalsIgnoreCase(userRole)) {
+                    System.out.println("Blocked unauthorized laser action '" + type + "' from user: " + userId);
                     return;
                 }
             }
@@ -140,6 +189,15 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 break;
             case "reorder":
                 handleReorder(session, roomId, data);
+                break;
+            case "clear":
+                handleClearCanvas(session, roomId);
+                break;
+            case "laser_move":
+                handleLaserMove(session, roomId, data);
+                break;
+            case "laser_stop":
+                handleLaserStop(session, roomId, data);
                 break;
             case "undo":
                 handleUndo(roomId);
@@ -192,12 +250,19 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         if (isApproved) {
             roomSessions.computeIfAbsent(roomId, k -> new CopyOnWriteArraySet<>()).add(session);
 
-            // Determine if current user can write
+            // Determine if current user can write and what their role is
             com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+            String role = "READ_ONLY";
             boolean canWrite = false;
             if (roomObj != null) {
-                canWrite = roomObj.getAdmin().getId().equals(userId) || roomService.canUserWrite(roomDbId, userId);
+                role = roomObj.getAdmin().getId().equals(userId) ? "WRITE" : roomService.getUserRole(roomDbId, userId);
+                canWrite = "WRITE".equalsIgnoreCase(role);
             }
+            @SuppressWarnings("unchecked")
+            Map<String, String> roles = (Map<String, String>) session.getAttributes()
+                    .computeIfAbsent("roles", k -> new java.util.concurrent.ConcurrentHashMap<>());
+            roles.put(roomId, role);
+
             @SuppressWarnings("unchecked")
             Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes()
                     .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
@@ -234,6 +299,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             ObjectNode response = objectMapper.createObjectNode();
             response.put("type", "room_state");
             response.put("roomId", roomId);
+            response.put("role", role);
             response.put("canWrite", canWrite);
             response.put("isLocked", roomState.isLocked());
             ArrayNode shapesNode = response.putArray("shapes");
@@ -654,7 +720,12 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 }
                 roomSessions.computeIfAbsent(roomId, k -> new CopyOnWriteArraySet<>()).add(targetSession);
 
-                // Set in-memory session permission cache for target user (default to true upon approval)
+                // Set in-memory session permission cache for target user (default to WRITE upon approval)
+                @SuppressWarnings("unchecked")
+                Map<String, String> roles = (Map<String, String>) targetSession.getAttributes()
+                        .computeIfAbsent("roles", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                roles.put(roomId, "WRITE");
+
                 @SuppressWarnings("unchecked")
                 Map<String, Boolean> permissions = (Map<String, Boolean>) targetSession.getAttributes()
                         .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
@@ -665,6 +736,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 ObjectNode response = objectMapper.createObjectNode();
                 response.put("type", "join_approved");
                 response.put("roomId", roomId);
+                response.put("role", "WRITE");
                 response.put("canWrite", true);
                 response.put("isLocked", roomState != null && roomState.isLocked());
 
@@ -804,18 +876,19 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
                         // Retrieve from session attribute cache or populate if missing
                         @SuppressWarnings("unchecked")
-                        Map<String, Boolean> permissions = (Map<String, Boolean>) s.getAttributes()
-                                .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
-                        boolean canWrite = permissions.computeIfAbsent(roomId, k -> {
-                            if (uId.equals(finalAdminId)) return true;
-                            if (finalRoomDbId == null) return true;
+                        Map<String, String> roles = (Map<String, String>) s.getAttributes()
+                                .computeIfAbsent("roles", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                        String role = roles.computeIfAbsent(roomId, k -> {
+                            if (uId.equals(finalAdminId)) return "WRITE";
+                            if (finalRoomDbId == null) return "WRITE";
                             try {
-                                return roomService.canUserWrite(finalRoomDbId, uId);
+                                return roomService.getUserRole(finalRoomDbId, uId);
                             } catch (Exception e) {
-                                return true;
+                                return "WRITE";
                             }
                         });
-                        uMap.put("canWrite", canWrite);
+                        uMap.put("role", role);
+                        uMap.put("canWrite", "WRITE".equalsIgnoreCase(role));
 
                         usersList.add(uMap);
                     }
@@ -833,6 +906,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             uNode.put("userName", (String) u.get("userName"));
             uNode.put("userEmail", (String) u.get("userEmail"));
             uNode.put("isHost", u.get("userId").equals(finalAdminId));
+            uNode.put("role", (String) u.get("role"));
             uNode.put("canWrite", (Boolean) u.get("canWrite"));
         }
 
@@ -930,13 +1004,19 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
     private void handleToggleWritePermission(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
         String adminId = (String) adminSession.getAttributes().get("userId");
-        if (!data.has("userId") || !data.has("canWrite")) return;
+        if (!data.has("userId")) return;
         String targetUserId = data.get("userId").asText();
-        boolean canWrite = data.get("canWrite").asBoolean();
+        
+        String role = "WRITE";
+        if (data.has("role")) {
+            role = data.get("role").asText();
+        } else if (data.has("canWrite")) {
+            role = data.get("canWrite").asBoolean() ? "WRITE" : "READ_ONLY";
+        }
 
         try {
             Integer roomDbId = Integer.parseInt(roomId);
-            roomService.updateUserWritePermission(roomDbId, targetUserId, canWrite, adminId);
+            roomService.updateUserRole(roomDbId, targetUserId, role, adminId);
 
             // Find the target collaborator session to update their in-memory permission and notify them
             Set<WebSocketSession> sessions = roomSessions.get(roomId);
@@ -944,14 +1024,20 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 for (WebSocketSession s : sessions) {
                     if (targetUserId.equals(s.getAttributes().get("userId"))) {
                         @SuppressWarnings("unchecked")
+                        Map<String, String> roles = (Map<String, String>) s.getAttributes()
+                                .computeIfAbsent("roles", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                        roles.put(roomId, role);
+
+                        @SuppressWarnings("unchecked")
                         Map<String, Boolean> permissions = (Map<String, Boolean>) s.getAttributes()
                                 .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
-                        permissions.put(roomId, canWrite);
+                        permissions.put(roomId, "WRITE".equalsIgnoreCase(role));
 
                         ObjectNode response = objectMapper.createObjectNode();
                         response.put("type", "write_permission_changed");
                         response.put("roomId", roomId);
-                        response.put("canWrite", canWrite);
+                        response.put("role", role);
+                        response.put("canWrite", "WRITE".equalsIgnoreCase(role));
                         s.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
                         break;
                     }
@@ -991,6 +1077,85 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             System.err.println("Error in handleToggleRoomLock: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private void handleClearCanvas(WebSocketSession session, String roomId) {
+        String userId = (String) session.getAttributes().get("userId");
+        if (!isUserAdmin(roomId, userId)) {
+            System.out.println("Blocked unauthorized clear canvas request from user " + userId);
+            return;
+        }
+
+        RoomState roomState = activeRooms.get(roomId);
+        if (roomState == null) return;
+
+        synchronized (roomState) {
+            roomState.saveState();
+            roomState.getShapes().clear();
+        }
+
+        // Broadcast clear event
+        ObjectNode broadcast = objectMapper.createObjectNode();
+        broadcast.put("type", "clear");
+        broadcast.put("roomId", roomId);
+
+        broadcastToRoom(roomId, broadcast);
+    }
+
+    private void handleLaserMove(WebSocketSession session, String roomId, JsonNode data) {
+        String userId = (String) session.getAttributes().get("userId");
+        RoomState roomState = activeRooms.get(roomId);
+        if (roomState == null) return;
+
+        double x = data.has("x") ? data.get("x").asDouble() : 0.0;
+        double y = data.has("y") ? data.get("y").asDouble() : 0.0;
+        String userName = data.has("userName") ? data.get("userName").asText() : "User";
+
+        ObjectNode broadcast = objectMapper.createObjectNode();
+        broadcast.put("type", "laser_move");
+        broadcast.put("userId", userId);
+        broadcast.put("userName", userName);
+        broadcast.put("x", x);
+        broadcast.put("y", y);
+        broadcast.put("roomId", roomId);
+
+        broadcastToOtherSessions(session, roomId, broadcast);
+    }
+
+    private void handleLaserStop(WebSocketSession session, String roomId, JsonNode data) {
+        String userId = (String) session.getAttributes().get("userId");
+        RoomState roomState = activeRooms.get(roomId);
+        if (roomState == null) return;
+
+        ObjectNode broadcast = objectMapper.createObjectNode();
+        broadcast.put("type", "laser_stop");
+        broadcast.put("userId", userId);
+        broadcast.put("roomId", roomId);
+
+        broadcastToOtherSessions(session, roomId, broadcast);
+    }
+
+    private void broadcastToOtherSessions(WebSocketSession sender, String roomId, JsonNode message) {
+        Set<WebSocketSession> sessions = roomSessions.get(roomId);
+        if (sessions == null) return;
+
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(message);
+        } catch (Exception e) {
+            return;
+        }
+
+        TextMessage wsMessage = new TextMessage(payload);
+        for (WebSocketSession session : sessions) {
+            if (session.isOpen() && !session.getId().equals(sender.getId())) {
+                try {
+                    session.sendMessage(wsMessage);
+                } catch (IOException e) {
+                    // ignore
+                }
+            }
         }
     }
 }

@@ -34,8 +34,6 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Public REST API endpoints
                 .requestMatchers("/api/signup", "/api/signin").permitAll()
-                .requestMatchers("/api/chats/**").permitAll()
-                .requestMatchers("/api/room/*").permitAll()
                 // Raw WebSocket endpoint (auth via query token)
                 .requestMatchers("/ws/**").permitAll()
                 // Everything else under /api requires authentication

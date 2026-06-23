@@ -4,7 +4,10 @@ const HTTP_BACKEND_URL = import.meta.env.VITE_HTTP_BACKEND_URL || "http://localh
 
 export async function getExistingShapes(roomId) {
   try {
-    const res = await axios.get(`${HTTP_BACKEND_URL}/chats/${roomId}`);
+    const token = localStorage.getItem("authToken");
+    const res = await axios.get(`${HTTP_BACKEND_URL}/chats/${roomId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const messages = res.data.messages || [];
 
     const shapes = messages.map((x) => {

@@ -35,6 +35,10 @@ public class JoinedRoom {
     @Builder.Default
     private Boolean canWrite = true;
 
+    @Column(name = "role", nullable = false, columnDefinition = "varchar(50) default 'WRITE'")
+    @Builder.Default
+    private String role = "WRITE";
+
     @PrePersist
     protected void onCreate() {
         this.joinedAt = LocalDateTime.now();

@@ -47,6 +47,7 @@ export default function Canvas({ roomId, socket }) {
   const [approvalStatus, setApprovalStatus] = useState("checking");
   const [pendingRequests, setPendingRequests] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
+  const [canWrite, setCanWrite] = useState(true);
 
   const currentUserId = getCurrentUserId();
   const isCurrentUserHost = collaborators.some((c) => c.userId === currentUserId && c.isHost);
@@ -79,6 +80,10 @@ export default function Canvas({ roomId, socket }) {
 
     game.setRoomDeletedCallback(() => {
       setApprovalStatus("deleted");
+    });
+
+    game.setWritePermissionCallback((val) => {
+      setCanWrite(val);
     });
   }, [game]);
 
@@ -328,6 +333,16 @@ export default function Canvas({ roomId, socket }) {
           cursor: selectedTool === "eraser" ? "crosshair" : "default",
         }}
       />
+
+      {!canWrite && !isCurrentUserHost && (
+        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700/80 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 z-[998] backdrop-blur-md animate-pulse">
+          <svg className="w-4 h-4 text-amber-500 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+          <span className="text-xs font-bold text-slate-100 tracking-wide uppercase">View-Only Mode</span>
+        </div>
+      )}
+
       <Topbar
         selectedTool={selectedTool}
         setSelectedTool={setSelectedTool}
@@ -340,6 +355,7 @@ export default function Canvas({ roomId, socket }) {
         collaborators={collaborators}
         currentUserId={currentUserId}
         isCurrentUserHost={isCurrentUserHost}
+        canWrite={canWrite}
       />
     </div>
   );
@@ -357,7 +373,10 @@ function Topbar({
   collaborators = [],
   currentUserId,
   isCurrentUserHost,
+  canWrite,
 }) {
+  const isDrawingDisabled = !canWrite && !isCurrentUserHost;
+  const activeTool = isDrawingDisabled ? "select" : selectedTool;
   const [showCollaborators, setShowCollaborators] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -390,60 +409,70 @@ function Topbar({
         style={{ display: "flex", alignItems: "center", maxWidth: "90vw" }}
       >
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("pencil")}
-          activated={selectedTool === "pencil"}
+          activated={activeTool === "pencil"}
           icon={<Pencil className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("rect")}
-          activated={selectedTool === "rect"}
+          activated={activeTool === "rect"}
           icon={<RectangleHorizontalIcon className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("circle")}
-          activated={selectedTool === "circle"}
+          activated={activeTool === "circle"}
           icon={<Circle className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("line")}
-          activated={selectedTool === "line"}
+          activated={activeTool === "line"}
           icon={<Minus className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("arrow")}
-          activated={selectedTool === "arrow"}
+          activated={activeTool === "arrow"}
           icon={<MoveUpRight className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("diamond")}
-          activated={selectedTool === "diamond"}
+          activated={activeTool === "diamond"}
           icon={<Diamond className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("text")}
-          activated={selectedTool === "text"}
+          activated={activeTool === "text"}
           icon={<Type className="w-5 h-5" />}
         />
         <IconButton
           onClick={() => setSelectedTool("select")}
-          activated={selectedTool === "select"}
+          activated={activeTool === "select"}
           icon={<MousePointer2 className="w-5 h-5" />}
         />
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => setSelectedTool("eraser")}
-          activated={selectedTool === "eraser"}
+          activated={activeTool === "eraser"}
           icon={<Eraser className="w-5 h-5" />}
         />
         
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => game?.undo()}
           activated={false}
           icon={<Undo2 className="w-5 h-5" />}
         />
 
         <IconButton
+          disabled={isDrawingDisabled}
           onClick={() => game?.redo()}
           activated={false}
           icon={<Redo2 className="w-5 h-5" />}
@@ -461,6 +490,7 @@ function Topbar({
           }}
         >
           <input
+            disabled={isDrawingDisabled}
             aria-label="Stroke color"
             title="Stroke color"
             type="color"
@@ -469,9 +499,10 @@ function Topbar({
               setColor(e.target.value);
               game?.setStrokeColor(e.target.value);
             }}
-            className="w-7 h-7 bg-transparent border-0 cursor-pointer rounded"
+            className={`w-7 h-7 bg-transparent border-0 cursor-pointer rounded ${isDrawingDisabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}`}
           />
           <input
+            disabled={isDrawingDisabled}
             aria-label="Stroke width"
             title="Stroke width"
             type="range"
@@ -483,7 +514,7 @@ function Topbar({
               setStroke(v);
               game?.setStrokeWidth(v);
             }}
-            className="w-20 md:w-28 accent-blue-500"
+            className={`w-20 md:w-28 accent-blue-500 ${isDrawingDisabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}`}
           />
         </div>
 
@@ -546,25 +577,59 @@ function Topbar({
                                 Host
                               </span>
                             )}
+                            {!c.canWrite && !c.isHost && (
+                              <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[9px] px-1 py-0.2 rounded font-bold border border-amber-500/20 flex items-center gap-0.5" title="Read-Only Mode">
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                                Read-Only
+                              </span>
+                            )}
                           </p>
                           <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{c.userEmail}</p>
                         </div>
                       </div>
                       
                       {isCurrentUserHost && !c.isHost && (
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`Are you sure you want to remove ${c.userName} from this room?`)) {
-                              game?.removeUser(c.userId);
-                            }
-                          }}
-                          className="p-1 rounded text-red-500 hover:bg-red-500/10 hover:text-red-600 transition-colors shrink-0"
-                          title="Remove user from canvas"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 21v-1a6 6 0 00-9-5.197M21 21v-1a6 6 0 00-3-4.82M18 10l3 3m0 0l-3 3m3-3H12" />
-                          </svg>
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Draw permission toggle button */}
+                          <button
+                            onClick={() => {
+                              game?.toggleWritePermission(c.userId, !c.canWrite);
+                            }}
+                            className={`p-1 rounded transition-colors ${
+                              c.canWrite
+                                ? "text-green-500 hover:bg-green-500/10 hover:text-green-600"
+                                : "text-amber-500 hover:bg-amber-500/10 hover:text-amber-605"
+                            }`}
+                            title={c.canWrite ? "Set to Read-Only Mode" : "Set to Write Mode"}
+                          >
+                            {c.canWrite ? (
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                              </svg>
+                            )}
+                          </button>
+
+                          {/* Kick button */}
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to remove ${c.userName} from this room?`)) {
+                                game?.removeUser(c.userId);
+                              }
+                            }}
+                            className="p-1 rounded text-red-500 hover:bg-red-500/10 hover:text-red-650 transition-colors"
+                            title="Remove user from canvas"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 21v-1a6 6 0 00-9-5.197M21 21v-1a6 6 0 00-3-4.82M18 10l3 3m0 0l-3 3m3-3H12" />
+                            </svg>
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))

@@ -28,6 +28,7 @@ export class Game {
     // screen coords
     this.cameraStart = { x: 0, y: 0 };
     this.spacePressed = false;
+    this.canWrite = true;
     // dragging selected shapes
     this.isDraggingShape = false;
     this.dragStartWorld = { x: 0, y: 0 };
@@ -53,6 +54,9 @@ export class Game {
         this.isPanning = true;
         this.panStart = { x: screen.x, y: screen.y };
         this.cameraStart = { x: this.cameraX, y: this.cameraY };
+        return;
+      }
+      if (this.canWrite === false) {
         return;
       }
       this.clicked = true;
@@ -120,6 +124,9 @@ export class Game {
     this.mouseUpHandler = (ev) => {
       if (this.isPanning) {
         this.isPanning = false;
+        return;
+      }
+      if (this.canWrite === false) {
         return;
       }
       const screen = this.getCanvasScreenCoords(ev);
@@ -275,6 +282,9 @@ export class Game {
           this.saveStateForUndo();
           this.activeEraser.drawPreview(this.ctx, screen.x, screen.y);
         }
+        return;
+      }
+      if (this.canWrite === false) {
         return;
       }
       if (this.selectedTool === "select" && this.isDraggingShape && this.dragOriginalShape && this.selectedShapeId) {
@@ -445,6 +455,15 @@ export class Game {
   setRoomDeletedCallback(cb) {
     this.roomDeletedCallback = cb;
   }
+  setWritePermissionCallback(cb) {
+    this.writePermissionCallback = cb;
+  }
+  setCanWrite(val) {
+    this.canWrite = val;
+    if (!val) {
+      this.setTool("select");
+    }
+  }
   approveJoin(targetUserId) {
     this.socket.send(JSON.stringify({
       type: "approve_join",
@@ -464,6 +483,14 @@ export class Game {
       type: "remove_user",
       roomId: this.roomId,
       userId: targetUserId
+    }));
+  }
+  toggleWritePermission(targetUserId, canWrite) {
+    this.socket.send(JSON.stringify({
+      type: "toggle_write_permission",
+      roomId: this.roomId,
+      userId: targetUserId,
+      canWrite: canWrite
     }));
   }
   getLayers() {
@@ -578,6 +605,10 @@ export class Game {
       }
       if (parsed.type === "join_approved") {
         this.statusCallback?.("approved");
+        if (parsed.canWrite !== undefined) {
+          this.setCanWrite(parsed.canWrite);
+          this.writePermissionCallback?.(parsed.canWrite);
+        }
         const serverShapes = parsed.shapes || [];
         this.existingShapes = serverShapes.map((s) => ({
           id: String(s.id),
@@ -618,10 +649,19 @@ export class Game {
         this.statusCallback?.("removed");
         return;
       }
+      if (parsed.type === "write_permission_changed") {
+        this.setCanWrite(parsed.canWrite);
+        this.writePermissionCallback?.(parsed.canWrite);
+        return;
+      }
 
       if (parsed.type === "room_state" || parsed.type === "undo" || parsed.type === "redo") {
         if (parsed.type === "room_state") {
           this.statusCallback?.("approved");
+          if (parsed.canWrite !== undefined) {
+            this.setCanWrite(parsed.canWrite);
+            this.writePermissionCallback?.(parsed.canWrite);
+          }
         }
         const serverShapes = parsed.shapes || [];
         this.existingShapes = serverShapes.map((s) => ({

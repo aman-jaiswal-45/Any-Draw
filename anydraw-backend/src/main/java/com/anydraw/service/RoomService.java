@@ -222,4 +222,29 @@ public class RoomService {
 
         joinedRoomRepository.deleteByUserIdAndRoomId(userId, roomId);
     }
+
+    public boolean canUserWrite(Integer roomId, String userId) {
+        Room room = roomRepository.findById(roomId).orElse(null);
+        if (room == null) return false;
+        if (room.getAdmin().getId().equals(userId)) return true;
+        return joinedRoomRepository.findByUserIdAndRoomId(userId, roomId)
+                .map(JoinedRoom::getCanWrite)
+                .orElse(false);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void updateUserWritePermission(Integer roomId, String userId, boolean canWrite, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the room administrator can change permissions");
+        }
+
+        JoinedRoom joined = joinedRoomRepository.findByUserIdAndRoomId(userId, roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Collaborator is not in this room"));
+
+        joined.setCanWrite(canWrite);
+        joinedRoomRepository.save(joined);
+    }
 }

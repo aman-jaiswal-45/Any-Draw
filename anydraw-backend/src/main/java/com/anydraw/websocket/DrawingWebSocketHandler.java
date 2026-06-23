@@ -90,6 +90,16 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         String type = data.get("type").asText();
         String roomId = data.get("roomId").asText();
 
+        // Validate write permission for drawing actions
+        if (type.equals("chat") || type.equals("update") || type.equals("delete") || type.equals("undo") || type.equals("redo")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes().get("permissions");
+            if (permissions == null || !permissions.getOrDefault(roomId, false)) {
+                System.out.println("Blocked unauthorized draw action '" + type + "' from user: " + session.getAttributes().get("userId"));
+                return;
+            }
+        }
+
         switch (type) {
             case "join_room":
                 handleJoinRoom(session, roomId);
@@ -121,6 +131,9 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             case "remove_user":
                 handleRemoveUser(session, roomId, data);
                 break;
+            case "toggle_write_permission":
+                handleToggleWritePermission(session, roomId, data);
+                break;
             default:
                 System.out.println("Unknown WS action type: " + type);
         }
@@ -151,6 +164,17 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         if (isApproved) {
             roomSessions.computeIfAbsent(roomId, k -> new CopyOnWriteArraySet<>()).add(session);
 
+            // Determine if current user can write
+            com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
+            boolean canWrite = false;
+            if (roomObj != null) {
+                canWrite = roomObj.getAdmin().getId().equals(userId) || roomService.canUserWrite(roomDbId, userId);
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Boolean> permissions = (Map<String, Boolean>) session.getAttributes()
+                    .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
+            permissions.put(roomId, canWrite);
+
             // Load or initialize room state
             RoomState roomState = activeRooms.get(roomId);
             if (roomState == null) {
@@ -179,6 +203,7 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             ObjectNode response = objectMapper.createObjectNode();
             response.put("type", "room_state");
             response.put("roomId", roomId);
+            response.put("canWrite", canWrite);
             ArrayNode shapesNode = response.putArray("shapes");
             synchronized (roomState) {
                 for (StoredShape shape : roomState.getShapes()) {
@@ -191,7 +216,6 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             System.out.println("User joined Room: " + roomId + ". Sent current shape count: " + roomState.getShapes().size());
 
             // If this user is the room creator, load all pending requests from database and send them
-            com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
             if (roomObj != null && roomObj.getAdmin().getId().equals(userId)) {
                 List<com.anydraw.model.PendingRequest> pending = roomService.getPendingRequestsForRoom(roomDbId);
                 if (!pending.isEmpty()) {
@@ -544,9 +568,16 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
                 }
                 roomSessions.computeIfAbsent(roomId, k -> new CopyOnWriteArraySet<>()).add(targetSession);
 
+                // Set in-memory session permission cache for target user (default to true upon approval)
+                @SuppressWarnings("unchecked")
+                Map<String, Boolean> permissions = (Map<String, Boolean>) targetSession.getAttributes()
+                        .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                permissions.put(roomId, true);
+
                 ObjectNode response = objectMapper.createObjectNode();
                 response.put("type", "join_approved");
                 response.put("roomId", roomId);
+                response.put("canWrite", true);
 
                 RoomState roomState = activeRooms.get(roomId);
                 if (roomState == null) {
@@ -656,9 +687,10 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         Set<WebSocketSession> sessions = roomSessions.get(roomId);
         if (sessions == null) return;
 
+        Integer roomDbId = null;
         String adminId = "";
         try {
-            Integer roomDbId = Integer.parseInt(roomId);
+            roomDbId = Integer.parseInt(roomId);
             com.anydraw.model.Room roomObj = roomService.getRoomById(roomDbId).orElse(null);
             if (roomObj != null) {
                 adminId = roomObj.getAdmin().getId();
@@ -667,17 +699,36 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             // Ignore parse errors
         }
 
-        List<Map<String, String>> usersList = new ArrayList<>();
+        final Integer finalRoomDbId = roomDbId;
+        final String finalAdminId = adminId;
+
+        List<Map<String, Object>> usersList = new ArrayList<>();
         for (WebSocketSession s : sessions) {
             if (s.isOpen()) {
                 String uId = (String) s.getAttributes().get("userId");
                 if (uId != null) {
                     com.anydraw.model.User user = userService.getUserById(uId).orElse(null);
                     if (user != null) {
-                        Map<String, String> uMap = new HashMap<>();
+                        Map<String, Object> uMap = new HashMap<>();
                         uMap.put("userId", user.getId());
                         uMap.put("userName", user.getName());
                         uMap.put("userEmail", user.getEmail());
+
+                        // Retrieve from session attribute cache or populate if missing
+                        @SuppressWarnings("unchecked")
+                        Map<String, Boolean> permissions = (Map<String, Boolean>) s.getAttributes()
+                                .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                        boolean canWrite = permissions.computeIfAbsent(roomId, k -> {
+                            if (uId.equals(finalAdminId)) return true;
+                            if (finalRoomDbId == null) return true;
+                            try {
+                                return roomService.canUserWrite(finalRoomDbId, uId);
+                            } catch (Exception e) {
+                                return true;
+                            }
+                        });
+                        uMap.put("canWrite", canWrite);
+
                         usersList.add(uMap);
                     }
                 }
@@ -688,12 +739,13 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         msg.put("type", "collaborators_list");
         msg.put("roomId", roomId);
         ArrayNode collaboratorsNode = msg.putArray("collaborators");
-        for (Map<String, String> u : usersList) {
+        for (Map<String, Object> u : usersList) {
             ObjectNode uNode = collaboratorsNode.addObject();
-            uNode.put("userId", u.get("userId"));
-            uNode.put("userName", u.get("userName"));
-            uNode.put("userEmail", u.get("userEmail"));
-            uNode.put("isHost", u.get("userId").equals(adminId));
+            uNode.put("userId", (String) u.get("userId"));
+            uNode.put("userName", (String) u.get("userName"));
+            uNode.put("userEmail", (String) u.get("userEmail"));
+            uNode.put("isHost", u.get("userId").equals(finalAdminId));
+            uNode.put("canWrite", (Boolean) u.get("canWrite"));
         }
 
         broadcastToRoom(roomId, msg);
@@ -784,6 +836,44 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
 
         } catch (Exception e) {
             System.err.println("Error in handleRemoveUser: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void handleToggleWritePermission(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
+        String adminId = (String) adminSession.getAttributes().get("userId");
+        if (!data.has("userId") || !data.has("canWrite")) return;
+        String targetUserId = data.get("userId").asText();
+        boolean canWrite = data.get("canWrite").asBoolean();
+
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            roomService.updateUserWritePermission(roomDbId, targetUserId, canWrite, adminId);
+
+            // Find the target collaborator session to update their in-memory permission and notify them
+            Set<WebSocketSession> sessions = roomSessions.get(roomId);
+            if (sessions != null) {
+                for (WebSocketSession s : sessions) {
+                    if (targetUserId.equals(s.getAttributes().get("userId"))) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Boolean> permissions = (Map<String, Boolean>) s.getAttributes()
+                                .computeIfAbsent("permissions", k -> new java.util.concurrent.ConcurrentHashMap<>());
+                        permissions.put(roomId, canWrite);
+
+                        ObjectNode response = objectMapper.createObjectNode();
+                        response.put("type", "write_permission_changed");
+                        response.put("roomId", roomId);
+                        response.put("canWrite", canWrite);
+                        s.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                        break;
+                    }
+                }
+            }
+
+            broadcastCollaboratorList(roomId);
+
+        } catch (Exception e) {
+            System.err.println("Error in handleToggleWritePermission: " + e.getMessage());
             e.printStackTrace();
         }
     }

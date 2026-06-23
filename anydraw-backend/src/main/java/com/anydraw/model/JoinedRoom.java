@@ -31,6 +31,10 @@ public class JoinedRoom {
     @Column(name = "joined_at", nullable = false)
     private LocalDateTime joinedAt;
 
+    @Column(name = "can_write", nullable = false, columnDefinition = "tinyint(1) default 1")
+    @Builder.Default
+    private Boolean canWrite = true;
+
     @PrePersist
     protected void onCreate() {
         this.joinedAt = LocalDateTime.now();

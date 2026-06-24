@@ -22,6 +22,9 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from "lucide-react";
 import { Game } from "../draw/Game.js";
 import { useTheme } from "../context/ThemeContext.jsx";
@@ -49,6 +52,9 @@ export default function Canvas({ roomId, socket }) {
   // Set initial stroke color depending on dark/light mode
   const [color, setColor] = useState(isDark ? "#ffffff" : "#000000");
   const [stroke, setStroke] = useState(2);
+  const [fontFamily, setFontFamily] = useState("Arial");
+  const [textAlign, setTextAlign] = useState("left");
+  const [selectedShapeId, setSelectedShapeId] = useState(null);
 
   const [approvalStatus, setApprovalStatus] = useState("checking");
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -127,8 +133,10 @@ export default function Canvas({ roomId, socket }) {
       game.setTool(selectedTool);
       game.setStrokeColor(color);
       game.setStrokeWidth(stroke);
+      game.setFontFamily(fontFamily);
+      game.setTextAlign(textAlign);
     }
-  }, [game, selectedTool, color, stroke]);
+  }, [game, selectedTool, color, stroke, fontFamily, textAlign]);
 
   // Initialize Game once
   useEffect(() => {
@@ -138,6 +146,7 @@ export default function Canvas({ roomId, socket }) {
 
     g.setZoom(1);
     g.setCamera(0, 0);
+    g.setSelectionCallback((id) => setSelectedShapeId(id));
 
     return () => {
       g.destroy();
@@ -401,6 +410,11 @@ export default function Canvas({ roomId, socket }) {
         canWrite={canWrite}
         role={role}
         isLocked={isLocked}
+        fontFamily={fontFamily}
+        setFontFamily={setFontFamily}
+        textAlign={textAlign}
+        setTextAlign={setTextAlign}
+        selectedShapeId={selectedShapeId}
       />
     </div>
   );
@@ -421,6 +435,11 @@ function Topbar({
   canWrite,
   role,
   isLocked,
+  fontFamily,
+  setFontFamily,
+  textAlign,
+  setTextAlign,
+  selectedShapeId,
 }) {
   const isDrawingDisabled = (role !== "WRITE" || isLocked) && !isCurrentUserHost;
   const activeTool = isDrawingDisabled ? (selectedTool === "laser" ? "laser" : "select") : selectedTool;
@@ -695,6 +714,78 @@ function Topbar({
             className={`w-20 md:w-28 accent-blue-500 ${isDrawingDisabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}`}
           />
         </div>
+
+        {/* Font family and alignment controls if text tool is active or a text shape is selected */}
+        {((activeTool === "text") || (selectedShapeId && game?.existingShapes.find((s) => s.id === selectedShapeId)?.shape?.type === "text")) && (
+          <>
+            <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+            <div className="flex items-center gap-2">
+              <select
+                aria-label="Font family"
+                value={selectedShapeId ? (game?.existingShapes.find((s) => s.id === selectedShapeId)?.shape?.fontFamily || "Arial") : fontFamily}
+                onChange={(e) => {
+                  const f = e.target.value;
+                  setFontFamily(f);
+                  game?.setFontFamily(f);
+                }}
+                className="bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs font-semibold focus:outline-none cursor-pointer"
+              >
+                <option value="Arial">Sans-Serif</option>
+                <option value="Georgia">Serif</option>
+                <option value="Courier New">Monospace</option>
+                <option value="Comic Sans MS">Comic</option>
+              </select>
+
+              <div className="flex bg-slate-50 dark:bg-slate-800 p-0.5 rounded border border-slate-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  aria-label="Align left"
+                  onClick={() => {
+                    setTextAlign("left");
+                    game?.setTextAlign("left");
+                  }}
+                  className={`p-1 rounded transition-colors ${
+                    (selectedShapeId ? (game?.existingShapes.find((s) => s.id === selectedShapeId)?.shape?.textAlign || "left") : textAlign) === "left"
+                      ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <AlignLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Align center"
+                  onClick={() => {
+                    setTextAlign("center");
+                    game?.setTextAlign("center");
+                  }}
+                  className={`p-1 rounded transition-colors ${
+                    (selectedShapeId ? (game?.existingShapes.find((s) => s.id === selectedShapeId)?.shape?.textAlign || "left") : textAlign) === "center"
+                      ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <AlignCenter className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Align right"
+                  onClick={() => {
+                    setTextAlign("right");
+                    game?.setTextAlign("right");
+                  }}
+                  className={`p-1 rounded transition-colors ${
+                    (selectedShapeId ? (game?.existingShapes.find((s) => s.id === selectedShapeId)?.shape?.textAlign || "left") : textAlign) === "right"
+                      ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <AlignRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
 

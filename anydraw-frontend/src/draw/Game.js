@@ -21,6 +21,8 @@ export class Game {
     this.selectedTool = "circle";
     this.defaultStrokeWidth = 2;
     this.defaultStrokeColor = "white";
+    this.defaultFontFamily = "Arial";
+    this.defaultTextAlign = "left";
     this.activePencil = null;
     this.activeEraser = null;
     // CAMERA
@@ -50,6 +52,24 @@ export class Game {
     this.keyUp = (e) => {
       if (e.code === "Space") this.spacePressed = false;
     };
+    this.dblDoubleClickHandler = (ev) => {
+      if (this.canWrite === false || (this.isLocked && !this.isHost)) {
+        return;
+      }
+      const screen = this.getCanvasScreenCoords(ev);
+      const world = this.screenToWorld(screen.x, screen.y);
+      
+      const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+      const foundId = this.selectTool.findAt(world.x, world.y, selectableShapes);
+      
+      if (foundId) {
+        const stored = this.existingShapes.find((s) => s.id === foundId);
+        if (stored && stored.shape && stored.shape.type === "text") {
+          this.startEditingText(stored.id, stored.shape);
+        }
+      }
+    };
+
     // ---- MOUSE HANDLERS ----
     // mousedown
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,6 +103,19 @@ export class Game {
       this.clicked = true;
       this.startX = world.x;
       this.startY = world.y;
+      if (this.selectedTool === "text") {
+        const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+        const found = this.selectTool.findAt(world.x, world.y, selectableShapes);
+        if (found) {
+          const stored = this.existingShapes.find((s) => s.id === found);
+          if (stored && stored.shape && stored.shape.type === "text") {
+            this.selectShape(found);
+            this.startEditingText(stored.id, stored.shape);
+            this.clicked = false;
+            return;
+          }
+        }
+      }
       if (this.selectedTool === "pencil") {
         this.activePencil = new Pencil(this.defaultStrokeWidth, this.defaultStrokeColor);
         this.activePencil.addPoint(world.x, world.y);
@@ -106,9 +139,8 @@ export class Game {
       }
       if (this.selectedTool === "select") {
         const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
-        const found = this.selectTool.findAt(screen.x, screen.y, selectableShapes);
-        this.selectedShapeId = found ?? null;
-        this.resizeTool.setSelectedId(this.selectedShapeId);
+        const found = this.selectTool.findAt(world.x, world.y, selectableShapes);
+        this.selectShape(found ?? null);
         this.clearCanvas();
         if (this.selectedShapeId) {
           const stored = this.existingShapes.find((s) => s.id === this.selectedShapeId);
@@ -123,23 +155,21 @@ export class Game {
       if (this.selectedTool === "resize") {
         if (!this.selectedShapeId) {
           const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
-          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, selectableShapes);
-          this.selectedShapeId = found ?? null;
-          this.resizeTool.setSelectedId(this.selectedShapeId);
+          const found = this.selectTool.findAt(world.x, world.y, selectableShapes);
+          this.selectShape(found ?? null);
           this.clearCanvas();
           return;
         }
         const stored = this.existingShapes.find((s) => s.id === this.selectedShapeId);
         if (!stored) return;
-        const handle = this.resizeTool.hitTestHandles(ev.offsetX, ev.offsetY, stored.shape);
+        const handle = this.resizeTool.hitTestHandles(world.x, world.y, stored.shape);
         if (handle) {
           this.dragOriginalShape = JSON.parse(JSON.stringify(stored.shape));
-          this.resizeTool.startResize(this.selectedShapeId, stored.shape, ev.offsetX, ev.offsetY, handle);
+          this.resizeTool.startResize(this.selectedShapeId, stored.shape, world.x, world.y, handle);
         } else {
           const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
-          const found = this.selectTool.findAt(ev.offsetX, ev.offsetY, selectableShapes);
-          this.selectedShapeId = found ?? null;
-          this.resizeTool.setSelectedId(this.selectedShapeId);
+          const found = this.selectTool.findAt(world.x, world.y, selectableShapes);
+          this.selectShape(found ?? null);
         }
         this.clearCanvas();
         return;
@@ -206,7 +236,7 @@ export class Game {
         return;
       }
       if (this.selectedTool === "resize" && this.resizeTool.isResizing()) {
-        const newShape = this.resizeTool.applyResize(ev.offsetX, ev.offsetY);
+        const newShape = this.resizeTool.applyResize(world.x, world.y);
         const id = this.resizeTool.getSelectedId();
         if (id && newShape && this.dragOriginalShape) {
           this.pushAction({
@@ -254,9 +284,17 @@ export class Game {
         const cornerRadius = Math.min(Math.abs(width), Math.abs(height)) * 0.08 || 6;
         shapeToSend = { type: "diamond", centerX, centerY, width: Math.abs(width), height: Math.abs(height), strokeWidth, strokeColor, cornerRadius, createdBy: this.currentUserId };
       } else if (selectedTool === "text") {
-        const w = Math.abs(width);
-        const h = Math.abs(height);
-        const fontSize = Math.max(12, Math.abs(height));
+        let w = Math.abs(width);
+        let h = Math.abs(height);
+        let fontSize = Math.max(12, Math.abs(height));
+        
+        // Single-click support: if dragging was minimal, treat it as a click
+        if (w < 8 && h < 8) {
+          w = 150; // default world width
+          h = 30;  // default world height
+          fontSize = 18; // default world font size
+        }
+
         const textShape = {
           type: "text",
           x: this.startX,
@@ -265,15 +303,16 @@ export class Game {
           height: h,
           text: "",
           fontSize,
-          fontFamily: "Arial",
+          fontFamily: this.defaultFontFamily || "Arial",
           lineHeight: 1.2,
-          textAlign: "left",
+          textAlign: this.defaultTextAlign || "left",
           verticalAlign: "top",
           strokeWidth,
           strokeColor,
           createdBy: this.currentUserId
         };
         const input = document.createElement("textarea");
+        input.id = "active-text-editor";
         const screenPos = this.worldToScreen(this.startX, this.startY);
         input.style.position = "absolute";
         input.style.left = `${screenPos.x}px`;
@@ -293,8 +332,43 @@ export class Game {
         input.style.lineHeight = `${textShape.lineHeight}`;
         document.body.appendChild(input);
         input.focus();
-        input.addEventListener("blur", () => {
-          textShape.text = input.value;
+
+        const adjustHeight = () => {
+          input.style.height = 'auto';
+          input.style.height = `${input.scrollHeight}px`;
+        };
+        input.addEventListener("input", adjustHeight);
+        adjustHeight();
+
+        const saveChanges = () => {
+          if (!input.parentNode) return;
+          const val = input.value.trim();
+          if (val === "") {
+            document.body.removeChild(input);
+            return;
+          }
+
+          textShape.text = val;
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.font = `${textShape.fontSize}px ${textShape.fontFamily}`;
+          const words = val.split(/\s+/);
+          const lines = [];
+          let currentLine = "";
+          for (const word of words) {
+            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            if (ctx.measureText(testLine).width > textShape.width && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+          ctx.restore();
+          const lineHeightPx = textShape.fontSize * textShape.lineHeight;
+          textShape.height = lines.length * lineHeightPx;
+
           const pendingId2 = `pending-${Date.now()}`;
           this.pushAction({ type: "create", shapeId: pendingId2, shapeData: textShape });
           this.existingShapes.push({ id: pendingId2, shape: textShape, tempId: pendingId2 });
@@ -302,7 +376,20 @@ export class Game {
           this.socket.send(JSON.stringify({ type: "chat", tempId: pendingId2, shape: textShape, roomId: this.roomId }));
           document.body.removeChild(input);
           this.notifyLayersChanged();
+        };
+
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            saveChanges();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            document.body.removeChild(input);
+            this.clearCanvas();
+          }
         });
+
+        input.addEventListener("blur", saveChanges);
         shapeToSend = null;
       }
       if (!shapeToSend) {
@@ -371,7 +458,7 @@ export class Game {
         return;
       }
       if (this.selectedTool === "resize" && this.resizeTool.isResizing()) {
-        const preview = this.resizeTool.applyResize(ev.offsetX, ev.offsetY);
+        const preview = this.resizeTool.applyResize(world.x, world.y);
         if (preview && this.resizeTool.getSelectedId()) {
           this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
           this.ctx.fillStyle = this.getCanvasBgColor();
@@ -462,8 +549,7 @@ export class Game {
     this.socket = socket;
     this.resizeTool = new ResizeTool();
     this.selectTool = new SelectTool((id, info) => {
-      this.selectedShapeId = id;
-      this.resizeTool.setSelectedId(id);
+      this.selectShape(id);
       if (!id) return;
       if (info?.part === "inside") {
         this.setTool("select");
@@ -589,8 +675,7 @@ export class Game {
       shapes: JSON.parse(JSON.stringify(this.existingShapes))
     });
     this.existingShapes = [];
-    this.selectedShapeId = null;
-    this.selectTool.clearSelection();
+    this.selectShape(null);
     this.resizeTool.finishResize();
     this.clearCanvas();
     this.notifyLayersChanged();
@@ -660,9 +745,19 @@ export class Game {
     this.canvas.removeEventListener("mousedown", this.mouseDownHandler);
     this.canvas.removeEventListener("mouseup", this.mouseUpHandler);
     this.canvas.removeEventListener("mousemove", this.mouseMoveHandler);
+    this.canvas.removeEventListener("dblclick", this.dblDoubleClickHandler);
     window.removeEventListener("keydown", this.keyDown);
     window.removeEventListener("keyup", this.keyUp);
     window.removeEventListener("keydown", this.keyComboListener);
+  }
+  setSelectionCallback(cb) {
+    this.selectionCallback = cb;
+  }
+  selectShape(id) {
+    this.selectedShapeId = id;
+    this.resizeTool.setSelectedId(id);
+    this.selectTool.selectedId = id;
+    this.selectionCallback?.(id);
   }
   setStrokeWidth(width) {
     this.defaultStrokeWidth = width;
@@ -671,6 +766,173 @@ export class Game {
   setStrokeColor(color) {
     this.defaultStrokeColor = color;
     this.activePencil?.setStrokeColor(color);
+  }
+  setFontFamily(family) {
+    this.defaultFontFamily = family;
+    if (this.selectedShapeId) {
+      const stored = this.existingShapes.find((s) => s.id === this.selectedShapeId);
+      if (stored && stored.shape && stored.shape.type === "text") {
+        const oldShape = JSON.parse(JSON.stringify(stored.shape));
+        stored.shape.fontFamily = family;
+
+        // Recalculate wrapping height for new font
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.font = `${stored.shape.fontSize}px ${stored.shape.fontFamily}`;
+        const hardLines = (stored.shape.text || "").split("\n");
+        const lines = [];
+        for (const hardLine of hardLines) {
+          const words = hardLine.split(" ");
+          let currentLine = "";
+          for (const word of words) {
+            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            if (ctx.measureText(testLine).width > stored.shape.width && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+        }
+        ctx.restore();
+        const lineHeightPx = stored.shape.fontSize * (stored.shape.lineHeight || 1.2);
+        stored.shape.height = lines.length * lineHeightPx;
+
+        this.pushAction({
+          type: "update",
+          shapeId: this.selectedShapeId,
+          oldShape: oldShape,
+          newShape: JSON.parse(JSON.stringify(stored.shape))
+        });
+        this.socket.send(JSON.stringify({ type: "update", id: this.selectedShapeId, shape: stored.shape, roomId: this.roomId }));
+        this.clearCanvas();
+      }
+    }
+  }
+  setTextAlign(align) {
+    this.defaultTextAlign = align;
+    if (this.selectedShapeId) {
+      const stored = this.existingShapes.find((s) => s.id === this.selectedShapeId);
+      if (stored && stored.shape && stored.shape.type === "text") {
+        const oldShape = JSON.parse(JSON.stringify(stored.shape));
+        stored.shape.textAlign = align;
+        this.pushAction({
+          type: "update",
+          shapeId: this.selectedShapeId,
+          oldShape: oldShape,
+          newShape: JSON.parse(JSON.stringify(stored.shape))
+        });
+        this.socket.send(JSON.stringify({ type: "update", id: this.selectedShapeId, shape: stored.shape, roomId: this.roomId }));
+        this.clearCanvas();
+      }
+    }
+  }
+  startEditingText(shapeId, shape) {
+    if (document.getElementById("active-text-editor")) return;
+    shape.isEditing = true;
+    this.clearCanvas();
+
+    const input = document.createElement("textarea");
+    input.id = "active-text-editor";
+    const screenPos = this.worldToScreen(shape.x, shape.y);
+    input.style.position = "absolute";
+    input.style.left = `${screenPos.x}px`;
+    input.style.top = `${screenPos.y}px`;
+    input.style.width = `${shape.width * this.zoom}px`;
+    input.style.height = `${(shape.height || 30) * this.zoom}px`;
+    input.style.fontSize = `${shape.fontSize * this.zoom}px`;
+    input.style.fontFamily = shape.fontFamily;
+    input.style.color = this.getStrokeColorFor(shape);
+    input.style.background = "transparent";
+    input.style.border = "1px dashed white";
+    input.style.outline = "none";
+    input.style.resize = "none";
+    input.style.overflow = "hidden";
+    input.style.whiteSpace = "pre-wrap";
+    input.style.wordWrap = "break-word";
+    input.style.lineHeight = `${shape.lineHeight || 1.2}`;
+    input.value = shape.text || "";
+
+    document.body.appendChild(input);
+    input.focus();
+
+    const adjustHeight = () => {
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight}px`;
+    };
+    input.addEventListener("input", adjustHeight);
+    adjustHeight();
+
+    const saveChanges = () => {
+      if (!input.parentNode) return;
+      const newText = input.value.trim();
+      delete shape.isEditing;
+
+      if (newText === "") {
+        this.pushAction({ type: "delete", shapeId, shapeData: JSON.parse(JSON.stringify(shape)) });
+        this.existingShapes = this.existingShapes.filter((s) => s.id !== shapeId);
+        this.socket.send(JSON.stringify({ type: "delete", id: shapeId, roomId: this.roomId }));
+      } else {
+        const oldShape = JSON.parse(JSON.stringify(shape));
+        oldShape.text = shape.text;
+
+        shape.text = newText;
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.font = `${shape.fontSize}px ${shape.fontFamily}`;
+        const hardLines = newText.split("\n");
+        const lines = [];
+        for (const hardLine of hardLines) {
+          const words = hardLine.split(" ");
+          let currentLine = "";
+          for (const word of words) {
+            const testLine = currentLine ? `${currentLine} ${word}` : word;
+            if (ctx.measureText(testLine).width > shape.width && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+        }
+        ctx.restore();
+        const lineHeightPx = shape.fontSize * (shape.lineHeight || 1.2);
+        shape.height = lines.length * lineHeightPx;
+
+        this.pushAction({
+          type: "update",
+          shapeId,
+          oldShape,
+          newShape: JSON.parse(JSON.stringify(shape))
+        });
+
+        const idx = this.existingShapes.findIndex((s) => s.id === shapeId);
+        if (idx !== -1) {
+          this.existingShapes[idx].shape = shape;
+        }
+        this.socket.send(JSON.stringify({ type: "update", id: shapeId, shape, roomId: this.roomId }));
+      }
+
+      document.body.removeChild(input);
+      this.clearCanvas();
+      this.notifyLayersChanged();
+    };
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        saveChanges();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        delete shape.isEditing;
+        document.body.removeChild(input);
+        this.clearCanvas();
+      }
+    });
+
+    input.addEventListener("blur", saveChanges);
   }
   async init() {
     try {
@@ -780,8 +1042,7 @@ export class Game {
         break;
       } else if (action.type === "clear") {
         this.existingShapes = [];
-        this.selectedShapeId = null;
-        this.selectTool.clearSelection();
+        this.selectShape(null);
         this.resizeTool.finishResize();
         this.undoStack.push(action);
         this.socket.send(JSON.stringify({
@@ -890,8 +1151,7 @@ export class Game {
       }
       if (parsed.type === "clear") {
         this.existingShapes = [];
-        this.selectedShapeId = null;
-        this.selectTool.clearSelection();
+        this.selectShape(null);
         this.resizeTool.finishResize();
         this.clearCanvas();
         this.notifyLayersChanged();
@@ -972,9 +1232,7 @@ export class Game {
         const deletedId = String(parsed.id);
         this.existingShapes = this.existingShapes.filter((s) => s.id !== deletedId);
         if (this.selectedShapeId === deletedId) {
-          this.selectedShapeId = null;
-          this.selectTool.clearSelection();
-          this.resizeTool.finishResize();
+          this.selectShape(null);
         }
         this.clearCanvas();
         this.notifyLayersChanged();
@@ -1118,7 +1376,7 @@ export class Game {
     this.ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.cameraX * this.zoom, -this.cameraY * this.zoom);
     for (const stored of this.existingShapes) {
       const shape = stored.shape;
-      if (!shape) continue;
+      if (!shape || shape.isEditing) continue;
       const strokeColor = this.getStrokeColorFor(shape);
       const strokeWidth = this.getStrokeWidthFor(shape);
       if (shape.type === "rect") {
@@ -1350,20 +1608,23 @@ export class Game {
       ctx.fillStyle = strokeColor;
       ctx.textAlign = shape.textAlign;
       ctx.textBaseline = shape.verticalAlign === "top" ? "top" : shape.verticalAlign === "middle" ? "middle" : "bottom";
-      const words = (shape.text || "").split(/\s+/);
+      const hardLines = (shape.text || "").split("\n");
       const lines = [];
-      let currentLine = "";
-      for (const word of words) {
-        const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > shape.width && currentLine) {
-          lines.push(currentLine);
-          currentLine = word;
-        } else {
-          currentLine = testLine;
+      for (const hardLine of hardLines) {
+        const words = hardLine.split(" ");
+        let currentLine = "";
+        for (const word of words) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          const metrics = ctx.measureText(testLine);
+          if (metrics.width > shape.width && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
         }
+        if (currentLine) lines.push(currentLine);
       }
-      if (currentLine) lines.push(currentLine);
       const lineHeightPx = shape.fontSize * shape.lineHeight;
       let startY = shape.y;
       if (shape.verticalAlign === "middle") {
@@ -1385,15 +1646,16 @@ export class Game {
   setTool(tool) {
     this.selectedTool = tool;
     if (tool !== "resize" && this.resizeTool.isResizing()) this.resizeTool.finishResize();
-    if (tool !== "select") {
+    if (tool !== "select" && tool !== "resize") {
       this.selectTool.clearSelection();
-      this.selectedShapeId = null;
+      this.selectShape(null);
     }
   }
   initMouseHandlers() {
     this.canvas.addEventListener("mousedown", this.mouseDownHandler);
     this.canvas.addEventListener("mouseup", this.mouseUpHandler);
     this.canvas.addEventListener("mousemove", this.mouseMoveHandler);
+    this.canvas.addEventListener("dblclick", this.dblDoubleClickHandler);
     this.canvas.addEventListener(
       "wheel",
       (ev) => {

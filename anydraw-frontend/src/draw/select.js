@@ -204,21 +204,24 @@ export class SelectTool {
       }
     } else if (shape.type === "text") {
       ctx.font = `${shape.fontSize}px ${shape.fontFamily}`;
-      const words = (shape.text || "").split(/\s+/);
-      let line = "";
+      const hardLines = (shape.text || "").split("\n");
       const lines = [];
 
-      for (const word of words) {
-        const testLine = line ? line + " " + word : word;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > shape.width && line) {
-          lines.push(line);
-          line = word;
-        } else {
-          line = testLine;
+      for (const hardLine of hardLines) {
+        const words = hardLine.split(" ");
+        let line = "";
+        for (const word of words) {
+          const testLine = line ? line + " " + word : word;
+          const metrics = ctx.measureText(testLine);
+          if (metrics.width > shape.width && line) {
+            lines.push(line);
+            line = word;
+          } else {
+            line = testLine;
+          }
         }
+        if (line) lines.push(line);
       }
-      if (line) lines.push(line);
 
       const lineHeightPx = shape.fontSize * (shape.lineHeight ?? 1.2);
       const textHeight = lines.length * lineHeightPx;

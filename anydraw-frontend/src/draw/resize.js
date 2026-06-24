@@ -193,19 +193,22 @@ export class ResizeTool {
       if (s.text) {
         const ctx = document.createElement("canvas").getContext("2d");
         ctx.font = `${s.fontSize}px ${s.fontFamily}`;
-        const words = s.text.split(/\s+/);
+        const hardLines = s.text.split("\n");
         const lines = [];
-        let currentLine = "";
-        for (const word of words) {
-          const testLine = currentLine ? currentLine + " " + word : word;
-          if (ctx.measureText(testLine).width > s.width && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-          } else {
-            currentLine = testLine;
+        for (const hardLine of hardLines) {
+          const words = hardLine.split(" ");
+          let currentLine = "";
+          for (const word of words) {
+            const testLine = currentLine ? currentLine + " " + word : word;
+            if (ctx.measureText(testLine).width > s.width && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
           }
+          if (currentLine) lines.push(currentLine);
         }
-        if (currentLine) lines.push(currentLine);
 
         const lineHeightPx = (s.fontSize || 12) * (s.lineHeight || 1.2);
         s.height = lines.length * lineHeightPx;

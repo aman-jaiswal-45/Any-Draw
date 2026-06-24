@@ -220,6 +220,12 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             case "toggle_room_lock":
                 handleToggleRoomLock(session, roomId, data);
                 break;
+            case "block_user":
+                handleBlockUser(session, roomId, data);
+                break;
+            case "unblock_user":
+                handleUnblockUser(session, roomId, data);
+                break;
             default:
                 System.out.println("Unknown WS action type: " + type);
         }
@@ -313,22 +319,10 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
             System.out.println("User joined Room: " + roomId + ". Sent current shape count: " + roomState.getShapes().size());
 
-            // If this user is the room creator, load all pending requests from database and send them
+            // If this user is the room creator, load all pending and blocked requests and send them
             if (roomObj != null && roomObj.getAdmin().getId().equals(userId)) {
-                List<com.anydraw.model.PendingRequest> pending = roomService.getPendingRequestsForRoom(roomDbId);
-                if (!pending.isEmpty()) {
-                    ObjectNode pendingResponse = objectMapper.createObjectNode();
-                    pendingResponse.put("type", "admin_pending_requests");
-                    pendingResponse.put("roomId", roomId);
-                    ArrayNode requestsNode = pendingResponse.putArray("requests");
-                    for (com.anydraw.model.PendingRequest req : pending) {
-                        ObjectNode reqNode = requestsNode.addObject();
-                        reqNode.put("userId", req.getUser().getId());
-                        reqNode.put("userName", req.getUser().getName());
-                        reqNode.put("userEmail", req.getUser().getEmail());
-                    }
-                    session.sendMessage(new TextMessage(objectMapper.writeValueAsString(pendingResponse)));
-                }
+                sendPendingRequestsToAdmin(session, roomDbId, roomId);
+                sendBlockedUsersToAdmin(session, roomDbId, roomId);
             }
 
             // Broadcast collaborator list update to the room
@@ -336,6 +330,15 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         } else {
             // Record request in DB
             String joinStatus = roomService.checkAndJoinRoom(roomDbId, userId);
+
+            if ("BLOCKED".equals(joinStatus)) {
+                ObjectNode response = objectMapper.createObjectNode();
+                response.put("type", "join_blocked");
+                response.put("roomId", roomId);
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                session.close(CloseStatus.NORMAL);
+                return;
+            }
 
             if ("REJECTED".equals(joinStatus)) {
                 ObjectNode response = objectMapper.createObjectNode();
@@ -826,6 +829,78 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void handleBlockUser(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
+        String adminId = (String) adminSession.getAttributes().get("userId");
+        if (!data.has("userId")) return;
+        String targetUserId = data.get("userId").asText();
+
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            roomService.blockPendingRequest(roomDbId, targetUserId, adminId);
+
+            // 1. Kick from pending waiting list if present
+            Set<WebSocketSession> pSessions = pendingSessions.get(roomId);
+            WebSocketSession targetSession = null;
+            if (pSessions != null) {
+                for (WebSocketSession s : pSessions) {
+                    if (targetUserId.equals(s.getAttributes().get("userId"))) {
+                        targetSession = s;
+                        break;
+                    }
+                }
+            }
+
+            if (targetSession != null && targetSession.isOpen()) {
+                pSessions.remove(targetSession);
+                if (pSessions.isEmpty()) {
+                    pendingSessions.remove(roomId);
+                }
+
+                ObjectNode response = objectMapper.createObjectNode();
+                response.put("type", "join_blocked");
+                response.put("roomId", roomId);
+                targetSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                targetSession.close(CloseStatus.NORMAL);
+                System.out.println("User " + targetUserId + " blocked (from pending) in Room: " + roomId);
+            }
+
+            // 2. Kick from active collaborators list if present
+            Set<WebSocketSession> activeSessions = roomSessions.get(roomId);
+            WebSocketSession targetActiveSession = null;
+            if (activeSessions != null) {
+                for (WebSocketSession s : activeSessions) {
+                    if (targetUserId.equals(s.getAttributes().get("userId"))) {
+                        targetActiveSession = s;
+                        break;
+                    }
+                }
+            }
+
+            if (targetActiveSession != null && targetActiveSession.isOpen()) {
+                activeSessions.remove(targetActiveSession);
+                if (activeSessions.isEmpty()) {
+                    roomSessions.remove(roomId);
+                }
+
+                ObjectNode response = objectMapper.createObjectNode();
+                response.put("type", "join_blocked");
+                response.put("roomId", roomId);
+                targetActiveSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+                targetActiveSession.close(CloseStatus.NORMAL);
+                System.out.println("User " + targetUserId + " blocked (from active) in Room: " + roomId);
+
+                broadcastCollaboratorList(roomId);
+            }
+
+            sendPendingRequestsToAdmin(adminSession, roomDbId, roomId);
+            sendBlockedUsersToAdmin(adminSession, roomDbId, roomId);
+
+        } catch (Exception e) {
+            System.err.println("Error in handleBlockUser: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
     private void sendPendingRequestsToAdmin(WebSocketSession adminSession, Integer roomDbId, String roomId) throws IOException {
         List<com.anydraw.model.PendingRequest> pending = roomService.getPendingRequestsForRoom(roomDbId);
         ObjectNode pendingResponse = objectMapper.createObjectNode();
@@ -840,6 +915,41 @@ public class DrawingWebSocketHandler extends TextWebSocketHandler {
         }
         if (adminSession.isOpen()) {
             adminSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(pendingResponse)));
+        }
+    }
+
+    private void sendBlockedUsersToAdmin(WebSocketSession adminSession, Integer roomDbId, String roomId) throws IOException {
+        List<com.anydraw.model.PendingRequest> blocked = roomService.getBlockedRequestsForRoom(roomDbId);
+        ObjectNode blockedResponse = objectMapper.createObjectNode();
+        blockedResponse.put("type", "admin_blocked_users");
+        blockedResponse.put("roomId", roomId);
+        ArrayNode usersNode = blockedResponse.putArray("users");
+        for (com.anydraw.model.PendingRequest req : blocked) {
+            ObjectNode uNode = usersNode.addObject();
+            uNode.put("userId", req.getUser().getId());
+            uNode.put("userName", req.getUser().getName());
+            uNode.put("userEmail", req.getUser().getEmail());
+        }
+        if (adminSession.isOpen()) {
+            adminSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(blockedResponse)));
+        }
+    }
+
+    private void handleUnblockUser(WebSocketSession adminSession, String roomId, JsonNode data) throws IOException {
+        String adminId = (String) adminSession.getAttributes().get("userId");
+        if (!data.has("userId")) return;
+        String targetUserId = data.get("userId").asText();
+
+        try {
+            Integer roomDbId = Integer.parseInt(roomId);
+            roomService.unblockPendingRequest(roomDbId, targetUserId, adminId);
+
+            sendBlockedUsersToAdmin(adminSession, roomDbId, roomId);
+            System.out.println("User " + targetUserId + " unblocked in Room: " + roomId);
+
+        } catch (Exception e) {
+            System.err.println("Error in handleUnblockUser: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

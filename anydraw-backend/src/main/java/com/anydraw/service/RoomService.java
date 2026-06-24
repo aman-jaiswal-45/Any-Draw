@@ -198,8 +198,55 @@ public class RoomService {
         pendingRequestRepository.save(request);
     }
 
+    @org.springframework.transaction.annotation.Transactional
+    public void blockPendingRequest(Integer roomId, String userId, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the room administrator can block users");
+        }
+
+        // If the user is currently a collaborator, remove them from JoinedRoom
+        joinedRoomRepository.deleteByUserIdAndRoomId(userId, roomId);
+
+        // Find or create pending request to update status to BLOCKED
+        PendingRequest request = pendingRequestRepository.findByUserIdAndRoomId(userId, roomId)
+                .orElseGet(() -> {
+                    User user = userService.getUserById(userId)
+                            .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                    return PendingRequest.builder()
+                            .user(user)
+                            .room(room)
+                            .createdAt(LocalDateTime.now())
+                            .build();
+                });
+        request.setStatus("BLOCKED");
+        pendingRequestRepository.save(request);
+    }
+
     public List<PendingRequest> getPendingRequestsForRoom(Integer roomId) {
         return pendingRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, "PENDING");
+    }
+
+    public List<PendingRequest> getBlockedRequestsForRoom(Integer roomId) {
+        return pendingRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, "BLOCKED");
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void unblockPendingRequest(Integer roomId, String userId, String adminId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        if (!room.getAdmin().getId().equals(adminId)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the room administrator can unblock users");
+        }
+
+        pendingRequestRepository.findByUserIdAndRoomId(userId, roomId).ifPresent(req -> {
+            if ("BLOCKED".equals(req.getStatus())) {
+                pendingRequestRepository.delete(req);
+            }
+        });
     }
 
     @org.springframework.transaction.annotation.Transactional

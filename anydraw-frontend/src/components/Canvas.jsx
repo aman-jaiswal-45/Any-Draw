@@ -59,6 +59,7 @@ export default function Canvas({ roomId, socket }) {
   const [approvalStatus, setApprovalStatus] = useState("checking");
   const [pendingRequests, setPendingRequests] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
+  const [blockedUsers, setBlockedUsers] = useState([]);
   const [canWrite, setCanWrite] = useState(true);
   const [role, setRole] = useState("WRITE");
   const [isLocked, setIsLocked] = useState(false);
@@ -79,6 +80,8 @@ export default function Canvas({ roomId, socket }) {
           }
           return "rejected";
         });
+      } else if (status === "blocked") {
+        setApprovalStatus("blocked");
       } else {
         setApprovalStatus(status);
       }
@@ -90,6 +93,10 @@ export default function Canvas({ roomId, socket }) {
 
     game.setCollaboratorsCallback((cols) => {
       setCollaborators(cols);
+    });
+
+    game.setBlockedUsersCallback((users) => {
+      setBlockedUsers(users);
     });
 
     game.setRoomDeletedCallback(() => {
@@ -270,6 +277,32 @@ export default function Canvas({ roomId, socket }) {
         </div>
       )}
 
+      {approvalStatus === "blocked" && (
+        <div className="absolute inset-0 z-[1000] flex flex-col justify-center items-center bg-slate-950 text-white px-6">
+          <div className="max-w-md w-full text-center space-y-8 bg-slate-900 p-8 rounded-2xl border border-red-900/40 shadow-2xl">
+            <div className="relative flex justify-center">
+              <div className="w-20 h-20 bg-red-950/40 border border-red-500/30 rounded-full flex items-center justify-center animate-bounce">
+                <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">Banned</h2>
+              <p className="text-slate-400 text-base">You have been blocked from entering this room by the host.</p>
+            </div>
+            <div className="pt-4">
+              <button
+                onClick={() => navigate("/dashboard")}
+                className="w-full py-3 px-6 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl border border-slate-700 transition-colors shadow-lg"
+              >
+                Go to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {approvalStatus === "deleted" && (
         <div className="absolute inset-0 z-[1000] flex flex-col justify-center items-center bg-slate-950 text-white px-6">
           <div className="max-w-md w-full text-center space-y-8 bg-slate-900 p-8 rounded-2xl border border-red-900/40 shadow-2xl">
@@ -340,6 +373,17 @@ export default function Canvas({ roomId, socket }) {
                 </div>
                 <div className="flex gap-2 justify-end">
                   <button
+                    onClick={() => {
+                      if (window.confirm(`Are you sure you want to block ${req.userName} from this room? They will not be able to knock or enter again.`)) {
+                        game?.blockUser(req.userId);
+                      }
+                    }}
+                    className="py-1 px-3 bg-red-700 hover:bg-red-800 text-white text-xs font-semibold rounded-md transition-colors shadow-md"
+                    title="Block user from entering this room"
+                  >
+                    Block
+                  </button>
+                  <button
                     onClick={() => game?.rejectJoin(req.userId)}
                     className="py-1 px-3 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-md transition-colors shadow-md"
                   >
@@ -405,6 +449,7 @@ export default function Canvas({ roomId, socket }) {
         setStroke={setStroke}
         isDark={isDark}
         collaborators={collaborators}
+        blockedUsers={blockedUsers}
         currentUserId={currentUserId}
         isCurrentUserHost={isCurrentUserHost}
         canWrite={canWrite}
@@ -430,6 +475,7 @@ function Topbar({
   setStroke,
   isDark,
   collaborators = [],
+  blockedUsers = [],
   currentUserId,
   isCurrentUserHost,
   canWrite,
@@ -920,6 +966,21 @@ function Topbar({
                             <option value="READ_ONLY" className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">Read-Only</option>
                           </select>
 
+                          {/* Block button */}
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to block ${c.userName} from this room? They will be removed and not allowed to join again.`)) {
+                                game?.blockUser(c.userId);
+                              }
+                            }}
+                            className="p-1 rounded text-red-700 hover:bg-red-750/10 hover:text-red-850 transition-colors cursor-pointer"
+                            title="Block user from this room"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                            </svg>
+                          </button>
+
                           {/* Kick button */}
                           <button
                             onClick={() => {
@@ -940,6 +1001,32 @@ function Topbar({
                   ))
                 )}
               </div>
+
+              {isCurrentUserHost && blockedUsers.length > 0 && (
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
+                  <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 tracking-wider uppercase">Blocked Users ({blockedUsers.length})</h4>
+                  <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-0.5">
+                    {blockedUsers.map((u) => (
+                      <div key={u.userId} className="flex items-center justify-between p-1 hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-lg">
+                        <div className="overflow-hidden text-left max-w-[130px]">
+                          <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate">{u.userName}</p>
+                          <p className="text-[9px] text-slate-500 truncate">{u.userEmail}</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to unblock ${u.userName}? They will be able to request access to this room again.`)) {
+                              game?.unblockUser(u.userId);
+                            }
+                          }}
+                          className="px-2 py-0.5 bg-slate-200 dark:bg-slate-850 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] font-semibold rounded transition-colors border border-slate-300 dark:border-slate-700"
+                        >
+                          Unblock
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

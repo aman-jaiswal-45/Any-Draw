@@ -618,6 +618,23 @@ export class Game {
       userId: targetUserId
     }));
   }
+  blockUser(targetUserId) {
+    this.socket.send(JSON.stringify({
+      type: "block_user",
+      roomId: this.roomId,
+      userId: targetUserId
+    }));
+  }
+  unblockUser(targetUserId) {
+    this.socket.send(JSON.stringify({
+      type: "unblock_user",
+      roomId: this.roomId,
+      userId: targetUserId
+    }));
+  }
+  setBlockedUsersCallback(cb) {
+    this.blockedUsersCallback = cb;
+  }
   removeUser(targetUserId) {
     this.socket.send(JSON.stringify({
       type: "remove_user",
@@ -1103,8 +1120,17 @@ export class Game {
         this.statusCallback?.("rejected");
         return;
       }
+      if (parsed.type === "join_blocked") {
+        this.socket.isTerminal = true;
+        this.statusCallback?.("blocked");
+        return;
+      }
       if (parsed.type === "admin_pending_requests") {
         this.pendingRequestsCallback?.(parsed.requests || []);
+        return;
+      }
+      if (parsed.type === "admin_blocked_users") {
+        this.blockedUsersCallback?.(parsed.users || []);
         return;
       }
       if (parsed.type === "join_request") {

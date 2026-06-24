@@ -2,6 +2,8 @@
 
 AnyDraw is a modern, premium, real-time collaborative whiteboarding application. Built with **React** on the frontend, **Spring Boot** on the backend, and powered by **WebSockets**, it enables multiple users to draw, write, and collaborate on a shared infinite canvas in real-time.
 
+🔗 **Live Application URL**: [https://anydraw-beige.vercel.app](https://anydraw-beige.vercel.app)
+
 ---
 
 ## Key Features 🚀

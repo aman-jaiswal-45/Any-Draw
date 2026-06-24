@@ -104,7 +104,8 @@ export class Game {
       this.startX = world.x;
       this.startY = world.y;
       if (this.selectedTool === "text") {
-        const selectableShapes = this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId);
+        const selectableShapes = (this.isHost ? this.existingShapes : this.existingShapes.filter((s) => s.shape && s.shape.createdBy === this.currentUserId))
+          .filter((s) => s.shape && s.shape.type === "text");
         const found = this.selectTool.findAt(world.x, world.y, selectableShapes);
         if (found) {
           const stored = this.existingShapes.find((s) => s.id === found);

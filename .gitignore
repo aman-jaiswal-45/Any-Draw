@@ -17,7 +17,6 @@ bin/
 .env.test.local
 .env.production.local
 local.properties
-anydraw-backend/src/main/resources/application.properties
 
 # IDE configurations
 .idea/
@@ -41,3 +40,6 @@ pnpm-debug.log*
 
 # OS Files
 .DS_Store
+
+# Local application secrets config
+**/application-local.properties
